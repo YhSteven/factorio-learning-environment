@@ -1,0 +1,8 @@
+{
+  "name": "fle-endless-resources",
+  "version": "1.0.0",
+  "title": "FLE Endless Resources",
+  "description": "Makes solid ore patches infinite (never deplete below minimum) for long multi-session FLE runs. Does not change map generation - same seed produces the same layout.",
+  "author": "factorio-automation",
+  "factorio_version": "2.0"
+}
