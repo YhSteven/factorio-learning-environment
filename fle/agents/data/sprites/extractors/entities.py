@@ -5,6 +5,7 @@ Handles complex sprite extraction including multi-layer sprites, rotations, and 
 """
 
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -81,7 +82,17 @@ class EntitySpritesheetExtractor:
     def _load_basis_file(self, basis_path: Path) -> Image.Image:
         """Load a basis file, transcoding if necessary"""
         # Check cache first
-        cache_key = str(basis_path).replace("/", "_").replace(".basis", "")
+        # ⚠️ 本地补丁（local-patches）：缓存键必须与机器无关。
+        # 上游用 str(basis_path) 做键 → 会把绝对路径写进去：
+        #   - Mac/Linux 上是 `/Users/xxx/...` → 数据集里带的预转码缓存键名绑死了作者路径，跨机必 miss；
+        #   - Windows 上是 `C:\Users\...`，含 `:`，pathlib 会当成绝对路径 → 转码产物被直接写进
+        #     spritemaps 而不是 cache/，既污染源数据又永远不命中缓存。
+        # 改为「相对 data_path 的路径」→ 跨机器、跨平台稳定命中。
+        try:
+            rel = basis_path.relative_to(self.data_path)
+        except ValueError:
+            rel = Path(basis_path.name)
+        cache_key = str(rel).replace("/", "_").replace("\\", "_").replace(".basis", "")
         cached_png = self.cache_dir / f"{cache_key}.png"
 
         if not cached_png.exists():
@@ -90,6 +101,31 @@ class EntitySpritesheetExtractor:
                 raise FileNotFoundError(f"Failed to transcode: {basis_path}")
 
         return Image.open(cached_png).convert("RGBA")
+
+    @staticmethod
+    def _resolve_basisu() -> Optional[str]:
+        """定位 basisu 可执行文件。
+
+        ⚠️ 本地补丁（local-patches）：上游直接 `subprocess.run(["basisu", ...])`，依赖 PATH。
+        本机（以及大多数非作者机器）PATH 里没有它 → `[WinError 2]` → 实体贴图整批静默失败。
+        查找顺序：
+          1. 环境变量 `FLE_BASISU`（显式指定，最高优先级）
+          2. 仓库内 `.fle/tools/basisu[.exe]`（本仓库约定，随机器各备一份，不进 git）
+          3. PATH 上的 `basisu`
+        """
+        env = os.environ.get("FLE_BASISU")
+        if env and Path(env).exists():
+            return env
+
+        # 本文件位于 <repo>/fle/fle/agents/data/sprites/extractors/entities.py
+        #   parents[5] = <repo>/fle    parents[6] = <repo>（factorio-automation/）
+        repo_root = Path(__file__).resolve().parents[6]
+        for name in ("basisu.exe", "basisu"):
+            cand = repo_root / ".fle" / "tools" / name
+            if cand.exists():
+                return str(cand)
+
+        return shutil.which("basisu")
 
     def _transcode_basis_to_png(self, basis_path: Path, output_path: Path) -> bool:
         """
@@ -103,14 +139,27 @@ class EntitySpritesheetExtractor:
             True if successful, False otherwise
         """
         try:
+            basisu = self._resolve_basisu()
+            if not basisu:
+                print(
+                    f"basisu not found, cannot transcode {basis_path.name}. "
+                    "Put basisu[.exe] in .fle/tools/ or set FLE_BASISU."
+                )
+                return False
+
             # Create temporary directory for basisu output
             with tempfile.TemporaryDirectory() as temp_dir:
                 temp_path = Path(temp_dir)
 
                 # Run basisu transcoder
-                cmd = ["basisu", "-unpack", str(basis_path)]
+                cmd = [basisu, "-unpack", str(basis_path)]
                 result = subprocess.run(
-                    cmd, cwd=temp_path, capture_output=True, text=True
+                    cmd,
+                    cwd=temp_path,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
                 )
 
                 if result.returncode != 0:

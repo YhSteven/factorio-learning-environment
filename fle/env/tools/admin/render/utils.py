@@ -26,29 +26,26 @@ from .constants import (
 def flatten_entities(
     entities: List[Union[Dict, Entity, EntityGroup]],
 ) -> List[Union[Entity, EntityCore]]:
-    # Sometimes directions are 0-12
-    max_direction = 0
+    # ⚠️ 本地补丁（local-patches，2026-09-28）：删除上游的
+    #   「先求 max_direction，若 > 6 则把所有 direction 除以 2」启发式。
+    # 理由（均有实测支撑）：
+    #   1) FLE 自己的 Direction 就是 16 向（NORTH=0 / EAST=4 / SOUTH=8 / WEST=12，对角 2/6/10/14），
+    #      EntityCore 也按 Direction 校验 ⇒ 传进来的合法值本就在 FLE 空间内，除以 2 只会改错语义。
+    #   2) 该启发式**无条件**生效：真实局只要有任一南/西向实体（max>6），东向的 4 就变成 2，
+    #      而 `renderers/*.py` 有 19 处硬查 `DIRECTIONS[direction]`（只认 0/4/8/12）
+    #      → `KeyError: 2` → `_render` 抛异常 → 上层静默退回 `_render_simple`。
+    #   3) `direction / 2` 还是 float（4/2=2.0），会再撞上 transport_belt 之类
+    #      `if not isinstance(direction, int): direction = direction.value` 分支 → AttributeError。
+    #   4) 真正的非 FLE 编码（如 0-3）除以 2 之后依然不是合法 Direction，救不回来
+    #      ⇒ 这条启发式没有任何能成立的场景，故整段移除。
     for entity in entities:
         if isinstance(entity, dict):
             if "direction" not in entity:
                 entity["direction"] = 0
-            direction = entity["direction"] if "direction" in entity else 0
-            if direction > max_direction:
-                max_direction = direction
 
     for entity in entities:
         if isinstance(entity, dict):
-            # if entity["name"] == "character":
-            #    continue
-
             try:
-                # Sigh. Some blueprints are 0-12.
-                entity["direction"] = (
-                    entity["direction"] / 2
-                    if max_direction > 6
-                    else entity["direction"]
-                )
-
                 yield EntityCore(**entity)
             except Exception:
                 pass
