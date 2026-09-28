@@ -35,6 +35,47 @@ def _deduplicate_entities(entities: List[Entity]) -> List[Entity]:
     return list(reversed(unique_entities))
 
 
+# LOCAL PATCH (FLE defect #9): when a belt's output is backed up, serialize.lua
+# appends exactly this string to the belt's warnings. Upstream compared
+# `entity.warnings[0] == "full"`, which can never match (wrong index AND wrong
+# text) -- the FULL_OUTPUT branch was dead code, so a belt group carrying 269
+# ore still reported WORKING and the agent had no way to see the line was jammed.
+_BELT_FULL_OUTPUT_WARNING = "belt output is full"
+
+
+def _entity_warning_strings(entity: Entity) -> List[str]:
+    warnings = getattr(entity, "warnings", None)
+    if not warnings:
+        return []
+    return [str(w) for w in warnings]
+
+
+def _belt_is_full_output(entity: Entity) -> bool:
+    return any(
+        _BELT_FULL_OUTPUT_WARNING in warning.lower()
+        for warning in _entity_warning_strings(entity)
+    )
+
+
+def _group_direction(entities: List[Entity]) -> Union[Direction, None]:
+    """The shared direction when every member agrees, else None (mixed group)."""
+    directions = {
+        entity.direction
+        for entity in entities
+        if getattr(entity, "direction", None) is not None
+    }
+    return directions.pop() if len(directions) == 1 else None
+
+
+def _dedupe_warnings(entities: List[Entity]) -> List[str]:
+    warnings: List[str] = []
+    for entity in entities:
+        for warning in _entity_warning_strings(entity):
+            if warning not in warnings:
+                warnings.append(warning)
+    return warnings
+
+
 def _construct_group(
     id: int, entities: List[Entity], prototype: Prototype, position: Position
 ) -> EntityGroup:
@@ -68,13 +109,14 @@ def _construct_group(
                         )  # Get current value or 0 if not exists
                         inventory[item] = current_value + value  # Add new value
 
-        if any(entity.warnings and entity.warnings[0] == "full" for entity in entities):
+        if any(_belt_is_full_output(entity) for entity in entities):
+            # A blocked line wins over EMPTY: "this line can't take more items"
+            # is the useful fact, and a blocked belt always has items on it.
             status = EntityStatus.FULL_OUTPUT
+        elif not inventory:
+            status = EntityStatus.EMPTY
         else:
             status = EntityStatus.WORKING
-
-        if not inventory:
-            status = EntityStatus.EMPTY
 
         return BeltGroup(
             id=0,
@@ -84,6 +126,8 @@ def _construct_group(
             outputs=outputs,
             status=status,
             position=position,
+            direction=_group_direction(entities),
+            warnings=_dedupe_warnings(entities),
         )
     elif prototype in (Prototype.Pipe, Prototype.UndergroundPipe) or isinstance(
         entities[0], Pipe

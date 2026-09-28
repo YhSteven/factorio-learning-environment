@@ -621,6 +621,21 @@ class TransportBelt(Entity):
     _height: float = 1
     _width: float = 1
 
+    @model_validator(mode="after")
+    def _ensure_both_lanes(self):
+        """LOCAL PATCH (FLE defect #10): always expose both belt lanes.
+
+        Upstream strips empty values out of the serialized inventory (see
+        GetEntities), so a loaded belt can come back with only one of
+        "left"/"right", making `belt.inventory["left"]` raise KeyError at random.
+        Fill in the missing lane with an empty Inventory instead.
+        """
+        if isinstance(self.inventory, dict):
+            for lane in ("left", "right"):
+                if not self.inventory.get(lane):
+                    self.inventory[lane] = Inventory()
+        return self
+
     def __repr__(self):
         return f"Belt(({self.position})->, direction={self.direction})"
 
@@ -974,6 +989,13 @@ class EntityGroup(BaseModel):
     status: EntityStatus = EntityStatus.NORMAL
     position: Position
     name: str = "entity-group"
+    # LOCAL PATCH (FLE defect #8): groups used to lack these two fields, so the
+    # generic "print the entity" idiom (name/position/direction/status/warnings)
+    # raised AttributeError on any group. `direction` is the group's direction
+    # when every member agrees, otherwise None (per-member directions stay on
+    # the members themselves).
+    direction: Optional[Direction] = None
+    warnings: List[str] = []
 
 
 class WallGroup(EntityGroup):
@@ -994,7 +1016,14 @@ class BeltGroup(EntityGroup):
 
     def __repr__(self) -> str:
         belt_summary = f"[{len(self.belts)} belts]"
-        return f"\n\tBeltGroup(inputs={self.inputs}, outputs={self.outputs}, inventory={self.inventory}, status={self.status}, belts={belt_summary})"
+        # LOCAL PATCH (FLE defect #8): surface the group direction and any
+        # aggregated warnings, so "which way does this line run" and "is this
+        # line jammed" are observable from the group itself.
+        return (
+            f"\n\tBeltGroup(inputs={self.inputs}, outputs={self.outputs}, "
+            f"direction={self.direction}, inventory={self.inventory}, "
+            f"status={self.status}, warnings={self.warnings}, belts={belt_summary})"
+        )
 
     def __str__(self):
         return self.__repr__()

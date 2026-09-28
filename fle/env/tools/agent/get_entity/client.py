@@ -15,9 +15,16 @@ class GetEntity(Tool):
     def __call__(self, entity: Prototype, position: Position) -> Entity:
         """
         Retrieve a given entity object at position (x, y) if it exists on the world.
+
+        Semantics (LOCAL PATCH, FLE defect #7): 'at position' means the position is
+        covered by that entity's own collision box, i.e. the cell is occupied by an
+        entity of this prototype. It does NOT return the nearest entity of the same
+        prototype within 3x3 tiles (upstream behaviour), which made it impossible to
+        tell whether a given cell is actually free.
+
         :param entity: Entity prototype to get, e.g Prototype.StoneFurnace
         :param position: Position where to look
-        :return: Entity object
+        :return: Entity object, or None when that cell holds no such entity
         """
         assert isinstance(entity, Prototype)
         assert isinstance(position, Position)

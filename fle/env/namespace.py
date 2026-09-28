@@ -565,6 +565,13 @@ class FactorioNamespace:
                     and result[0] == "RETURN"
                 ):
                     return result
+            # LOCAL PATCH (FLE defect #11): propagate break/continue out of the
+            # `if` body. Upstream always returned True here, which swallowed the
+            # signal -- the remaining statements of the enclosing loop body still
+            # ran, so `continue` silently did nothing and `break` was "one
+            # statement late". Silent, and the agent believes it worked.
+            if self.loop_context.state in ("BREAK", "CONTINUE"):
+                return False
             return True
 
         elif isinstance(node, ast.FunctionDef):
@@ -1046,6 +1053,11 @@ class FactorioNamespace:
                         and result[0] == "RETURN"
                     ):
                         return result
+            # LOCAL PATCH (FLE defect #11): same break/continue propagation as
+            # `ast.If` -- a try/except block inside a loop used to swallow the
+            # signal too.
+            if self.loop_context.state in ("BREAK", "CONTINUE"):
+                return False
             return True
 
         else:
