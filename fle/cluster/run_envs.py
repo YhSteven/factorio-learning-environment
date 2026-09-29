@@ -123,11 +123,16 @@ class ComposeGenerator:
         # Remove DLC data dirs so the server runs vanilla base-game only;
         # this prevents "Sync mods with server" / "No release" errors for
         # clients that don't own Space Age.
+        # Also stage mods from the read-only 9p bind mount (/opt/factorio/mods-src)
+        # into the container's writable layer (/opt/factorio/mods) so that
+        # writeModlist's copy_file works on shutdown (see _bundled_mods_volume).
         return (
             f"/bin/sh -c '"
             f"rm -rf /opt/factorio/data/elevated-rails "
             f"/opt/factorio/data/quality "
             f"/opt/factorio/data/space-age && "
+            f"rm -rf /opt/factorio/mods && mkdir -p /opt/factorio/mods && "
+            f"cp -a /opt/factorio/mods-src/. /opt/factorio/mods/ && "
             f"exec {factorio_cmd}'"
         )
 
@@ -175,14 +180,25 @@ class ComposeGenerator:
         }
 
     def _bundled_mods_volume(self):
-        """Returns bundled mod-list config (disables DLC mods for client sync)."""
+        """Returns bundled mod-list config (disables DLC mods for client sync).
+
+        NOTE: mounted at /opt/factorio/mods-src (NOT /opt/factorio/mods).
+        The host directory reaches the container through a Windows bind mount
+        (9p/drvfs), which does not support the kernel-side copy used by
+        Factorio's shutdown-time ``writeModlist`` (std::filesystem::copy_file)
+        -> it raises "Operation not permitted" and truncates
+        ``mod-list.json`` to 0 bytes on every graceful stop/restart.
+        Instead, the entry command copies the mods into the container's
+        writable layer (overlay/ext4) at startup and --mod-directory points
+        there, so writeModlist succeeds and never corrupts the file.
+        """
         pkg_root = ir.files("fle.cluster")
         mods_dir = Path(pkg_root / "mods")
         if not mods_dir.exists():
             raise ValueError(f"Bundled mods directory '{mods_dir}' does not exist.")
         return {
             "source": str(mods_dir.resolve()),
-            "target": "/opt/factorio/mods",
+            "target": "/opt/factorio/mods-src",
             "type": "bind",
         }
 
