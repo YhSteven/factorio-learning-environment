@@ -123,7 +123,23 @@ local function can_mine(entity)
     if entity.type == "mining-drill" then
         -- Check if there's no resource under the drill
         if entity.mining_target == nil then
-           return false
+            -- An idle drill without fuel also has mining_target == nil even
+            -- when it sits on ore; reporting 'nothing to mine' there would
+            -- misframe a fuel problem (has_fuel already reports 'out of
+            -- fuel'). Only claim "nothing to mine" when the drill can run.
+            local burner = entity.burner
+            if burner then
+                local fuel_inventory = entity.get_inventory(defines.inventory.fuel)
+                local contents = storage.utils.get_contents_compat(fuel_inventory)
+                for item_name, item_count in pairs(contents) do
+                    local fuel_value = prototypes.item[item_name].fuel_value
+                    if fuel_value and fuel_value > 0 then
+                        return false -- fueled but no target: genuinely nothing to mine
+                    end
+                end
+                return true -- out of fuel: not a resource problem
+            end
+            return false -- electric drill with no target: genuinely nothing to mine
         end
     end
     return true

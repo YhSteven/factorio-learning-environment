@@ -41,5 +41,16 @@ class CanPlaceEntity(Tool):
             if isinstance(response, bool):
                 return response
             if isinstance(response, str):
+                # A string here means the Lua side raised an error. Previously
+                # every error was silently converted to `False`, which made
+                # "no item in inventory" indistinguishable from "position
+                # blocked" and pushed agents into brute-forcing positions.
+                # Surface the inventory case as a readable error instead.
+                message = self.get_error_message(response)
+                if "in inventory" in message:
+                    raise Exception(
+                        f"can_place_entity: {message} "
+                        f"(the position itself may be fine - obtain a {name} first)"
+                    )
                 return False
         return True

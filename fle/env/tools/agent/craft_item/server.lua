@@ -104,7 +104,15 @@ storage.actions.craft_item = function(player_index, entity, count)
             can_hand_craft = (recipe.category == "crafting")
         end
         if not can_hand_craft then
-            return false, "Item " .. recipe_name .. " cannot be crafted (category: " .. tostring(recipe.category) .. "). Recipe requires a crafting machine or smelting in a furnace"
+            local ingredient_parts = {}
+            for _, ingredient in pairs(recipe.ingredients) do
+                table.insert(ingredient_parts, ingredient.amount .. "x " .. ingredient.name .. " (you have " .. player.get_item_count(ingredient.name) .. ")")
+            end
+            local hint = "craft it in an assembling machine instead"
+            if recipe.category == "smelting" then
+                hint = "put the raw material into a furnace instead of crafting it by hand"
+            end
+            return false, "Item " .. recipe_name .. " cannot be hand-crafted (category: " .. tostring(recipe.category) .. ") - " .. hint .. ". Required: " .. table.concat(ingredient_parts, ", ")
         end
         return true, recipe
     end
@@ -192,16 +200,24 @@ storage.actions.craft_item = function(player_index, entity, count)
                 player.surface.spill_item_stack(player.position, {name = entity_name, count = actual_craft_count - crafted})
             end
 
-            update_production_stats(player.force, recipe, crafted)
+            -- Production stats must be recorded in craft OPERATIONS to match
+            -- the ingredients actually removed above (crafts_needed) - passing
+            -- the number of inserted ITEMS here double-counts inputs and
+            -- inflates outputs for recipes with products[1].amount > 1.
+            update_production_stats(player.force, recipe, crafts_needed)
             return crafted, nil
         else
             -- Slow crafting implementation
-            local crafted = player.begin_crafting{count=count, recipe=entity_name}
+            -- begin_crafting's count is the number of craft OPERATIONS, and
+            -- each operation yields recipe.products[1].amount items - passing
+            -- the raw item count here over-queues recipes with amount > 1.
+            local crafts_ops = math.ceil(count / recipe.products[1].amount)
+            local crafted = player.begin_crafting{count=crafts_ops, recipe=entity_name}
             if crafted == 0 then
                 return 0, "unable to begin crafting - check prerequisites and inventory space"
             end
             update_production_stats(player.force, recipe, crafted)
-            return crafted, nil
+            return crafted * recipe.products[1].amount, nil
         end
     end
 
@@ -225,7 +241,10 @@ storage.actions.craft_item = function(player_index, entity, count)
     end
 
     if total_crafted >= count or (not storage.fast and total_crafted > 0) then
-        return count
+        -- Return what was actually crafted/queued, which can legitimately
+        -- exceed `count`: recipes with products[1].amount > 1 are crafted in
+        -- whole operations, so the result is rounded up to a whole batch.
+        return total_crafted
     elseif total_crafted > 0 then
         error(string.format("\"Successfully crafted %dx but failed to craft %dx %s because %s\"",
             total_crafted, count - total_crafted, entity, final_error))

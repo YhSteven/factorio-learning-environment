@@ -468,14 +468,27 @@ storage.actions.harvest_resource = function(player_index, x, y, count, radius)
 
     local distance = math.sqrt((position.x - player_position.x)^2 + (position.y - player_position.y)^2)
     if distance > player.resource_reach_distance then
-        error("Nothing within reach to harvest")
+        error("Nothing within reach to harvest: (" .. position.x .. ", " .. position.y .. ") is " .. string.format("%.1f", distance) .. " tiles away but your reach is " .. player.resource_reach_distance .. " - move closer")
     end
 
     local surface = player.surface
     local target_type, target_name = find_entity_type_at_position(surface, position)
 
     if not target_type then
-        error("Nothing within reach to harvest")
+        -- Distinguish "nothing there" from "the tile is occupied by a
+        -- building" - a furnace covering an ore tile used to produce the
+        -- same generic message, hiding the real cause from the agent.
+        local occupants = surface.find_entities_filtered{
+            area = {{position.x - 0.5, position.y - 0.5}, {position.x + 0.5, position.y + 0.5}}
+        }
+        for _, occupant in pairs(occupants) do
+            if occupant.valid and occupant.type == "character" then
+                error("Nothing to harvest at (" .. position.x .. ", " .. position.y .. ") - you are standing on the tile, move away first")
+            elseif occupant.valid and occupant.type ~= "resource" and occupant.type ~= "item-on-ground" and occupant.type ~= "corpse" and occupant.type ~= "character" then
+                error("Nothing to harvest at (" .. position.x .. ", " .. position.y .. ") - the tile is occupied by " .. occupant.name .. " (" .. occupant.type .. "), remove it first or target another position")
+            end
+        end
+        error("Nothing to harvest at (" .. position.x .. ", " .. position.y .. ") - no resources, trees or rocks on that tile")
     end
 
     --if not storage.fast then
@@ -523,7 +536,7 @@ storage.actions.harvest_resource = function(player_index, x, y, count, radius)
     end
 
     if total_yield == 0 then
-        error("Nothing within reach to harvest")
+        error("Harvested nothing: no resources, trees or rocks within radius " .. radius .. " of (" .. position.x .. ", " .. position.y .. ")")
     else
         -- game.print("Harvested resources yielding " .. total_yield .. " items")
         return total_yield

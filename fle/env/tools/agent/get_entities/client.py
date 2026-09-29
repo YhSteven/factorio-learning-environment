@@ -314,10 +314,21 @@ class GetEntities(Tool):
                             ):
                                 # Individual belts requested without position - extract individual belts from group
                                 for belt in entity.belts:
-                                    if (
-                                        hasattr(belt, "prototype")
-                                        and belt.prototype in entities
-                                    ):
+                                    belt_prototype = getattr(belt, "prototype", None)
+                                    if belt_prototype is None:
+                                        # Group members built from serialized data
+                                        # may lack `prototype`; fall back to name
+                                        # matching instead of silently dropping them.
+                                        belt_name = str(getattr(belt, "name", "")).replace("_", "-")
+                                        belt_prototype = next(
+                                            (
+                                                p
+                                                for p in Prototype
+                                                if p.value[0] == belt_name
+                                            ),
+                                            None,
+                                        )
+                                    if belt_prototype in entities:
                                         filtered_entities.append(belt)
                         elif entity.__class__.__name__ == "WallGroup":
                             # WallGroup doesn't have a corresponding Prototype, but include if present
