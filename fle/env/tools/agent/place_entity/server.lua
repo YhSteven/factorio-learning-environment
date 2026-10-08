@@ -273,9 +273,14 @@ storage.actions.place_entity = function(player_index, entity, direction, x, y, e
                         direction = entity_direction,
                     }
                     if have_built then
+                        -- LOCAL PATCH (P0-13): 直接用 create_entity 返回的实体序列化返回，
+                        -- 不再用「吸附前的候选格」回读 get_entity —— 引擎会把 offshore-pump
+                        -- 等实体吸附到半格位（如 (-15.5,34.5)），严格 bbox 回读找不到 ⇒ 抛「找不到
+                        -- 实体」的假失败，而此处物品已扣且无回滚（模型以为没放下、东西却没了）。
+                        -- 先序列化（对刚建成的实体必成）再扣物品，失败也不丢东西。
+                        local serialized = storage.utils.serialize_entity(have_built)
                         player.remove_item{name = entity, count = 1}
-                        -- game.print("Placed " .. entity .. " at " .. new_position.x .. ", " .. new_position.y)
-                        return storage.actions.get_entity(player_index, entity, new_position.x, new_position.y)
+                        return serialized
                     end
                 else
                     error("\"Could not find a suitable position to place " .. entity .. " near the target location.\"")
@@ -375,28 +380,11 @@ storage.actions.place_entity = function(player_index, entity, direction, x, y, e
         }
 
         if have_built then
+            -- LOCAL PATCH (P0-13): 同非精确分支 —— 直接返回 create_entity 建成的实体，
+            -- 避免「已放下却按请求格回读失败（实体被引擎吸附到半格位）⇒ 假失败 + 物品已扣」。
+            local serialized = storage.utils.serialize_entity(have_built)
             player.remove_item{name = entity, count = 1}
-            -- game.print("Placed " .. entity .. " at " .. position.x .. ", " .. position.y)
-
-            -- Find and return the placed entity
-            -- Use the entity prototype's tile dimensions for search area
-            local prototype = prototypes.entity[entity]
-            local width = 1
-            local height = 1
-            if prototype and prototype.tile_width then
-                width = prototype.tile_width / 2 + 0.5
-                height = prototype.tile_height / 2 + 0.5
-            end
-            local target_area = {
-                {position.x - width, position.y - height},
-                {position.x + width, position.y + height}
-            }
-            local entities = player.surface.find_entities_filtered{area = target_area, name = entity}
-
-            if #entities > 0 then
-                return storage.utils.serialize_entity(entities[1])
-            end
-            error("\"Could not find placed entity\"")
+            return serialized
         else
             -- create_entity returned nil - collect diagnostic information
             local diag = {}

@@ -62,11 +62,13 @@ class PlaceObject(Tool):
                 self.player_index, name, factorio_direction, x, y, exact
             )
         except Exception as e:
+            # LOCAL PATCH (P0-14): 原内层 try 会把刚抛出的异常立刻再捕获 ⇒ 永远走兜底分支，
+            # 可读原因被丢弃。这里直接保留 get_error_message 的结果。
             try:
                 msg = self.get_error_message(str(e))
-                raise Exception(f"Could not place {name} at ({x}, {y}), {msg}")
             except Exception:
-                raise Exception(f"Could not place {name} at ({x}, {y})", e)
+                msg = str(e)
+            raise Exception(f"Could not place {name} at ({x}, {y}), {msg}") from e
 
         # If we are in `slow` mode, there is a delay between placing the entity and the entity being created
         if not self.game_state.instance.fast:
@@ -74,16 +76,14 @@ class PlaceObject(Tool):
             return self.get_entity(entity, position)
         else:
             if not isinstance(response, dict):
+                # LOCAL PATCH (P0-14): 原来 split(":")[-1] 只取「最后一个冒号之后」的内容
+                # （执行侧报错是纯字符串），于是 "No X in inventory. Current inventory:" 或
+                # server.lua「有阻塞物: ...」的前缀被整段丢掉，只剩背包/后缀 ⇒ 报错不说原因。
+                # 改用 get_error_message：只剥 Lua 源前缀与首尾引号，完整保留可读原因。
                 try:
-                    msg = (
-                        str(response)
-                        .split(":")[-1]
-                        .replace('"', "")
-                        .replace("'", "")
-                        .strip()
-                    )
-                except:
-                    msg = str(response).lstrip()
+                    msg = self.get_error_message(str(response))
+                except Exception:
+                    msg = str(response).strip()
                 raise Exception(f"Could not place {name} at ({x}, {y}), {msg}")
 
             cleaned_response = self.clean_response(response)
