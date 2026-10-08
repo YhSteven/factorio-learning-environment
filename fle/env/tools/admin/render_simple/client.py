@@ -139,6 +139,16 @@ class RenderSimple(Tool):
                 self.player_index, "radius", position.x, position.y, radius
             )
 
+        # LOCAL PATCH (FLE 缺陷 #12 附带): Lua 侧报错时这里拿到的是错误字符串，
+        # 上游直接 response.get(...) 会抛无信息的 AttributeError('str' object has no
+        # attribute 'get')，把真正的 Lua 报错整条吞掉（本次就是靠它掩盖了
+        # "supply_area_distance doesn't exist"）。改为显式抛可读异常。
+        if not isinstance(response, dict):
+            raise Exception(
+                f"render_simple: game did not return render data "
+                f"({type(response).__name__}): {str(response)[:300]}"
+            )
+
         # Get entities within radius of position
         entities = self.get_entities(position=position, radius=radius)
 

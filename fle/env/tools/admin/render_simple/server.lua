@@ -125,7 +125,19 @@ storage.actions.render_simple = function(player_index, method, arg1, arg2, arg3,
     for _, pole in ipairs(electric_poles) do
         if pole.valid and pole.electric_network_id then
             local network_id = pole.electric_network_id
-            local supply_area = pole.prototype.supply_area_distance or 0
+            -- LOCAL PATCH (FLE 缺陷 #12): `supply_area_distance` 是 Factorio 1.x 的
+            -- LuaEntityPrototype 字段，2.0 已移除。直接索引会 raise（"LuaEntityPrototype
+            -- doesn't contain key supply_area_distance"），该错误串被回传成「非 dict 响应」，
+            -- 于是 client.py 在 response.get(...) 处抛 AttributeError('str' has no 'get')：
+            -- 只要渲染区域里有电线杆，人类快照与 AI view_map 就全盲（D29 / docs/02 §7.36）。
+            -- 这里改成 pcall 探测 + 0 兜底：该值只用于画「供电范围圆」，缺省不影响其他图层。
+            local supply_area = 0
+            local ok_area, area = pcall(function()
+                return pole.prototype.supply_area_distance
+            end)
+            if ok_area and area then
+                supply_area = area
+            end
 
             -- Get the area this pole covers
             local pole_data = {
