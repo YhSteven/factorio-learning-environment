@@ -791,7 +791,14 @@ storage.utils.serialize_entity = function(entity)
             serialized.warnings = {}
         end
         if is_full then
-            table.insert(serialized.warnings, "Belt output is full")
+            -- LOCAL PATCH (P0-18): MUST wrap in single quotes like alerts.lua does.
+            -- `dump` writes string VALUES unquoted (tostring), and the Python-side
+            -- Lua decoder only keeps interior spaces for QUOTED tokens -- an unquoted
+            -- "Belt output is full" came back as "full", so groupable_entities'
+            -- FULL_OUTPUT check (looking for "belt output is full") never matched and
+            -- the jammed-line status stayed WORKING in real games (D24 #9 fix had only
+            -- passed the synthetic offline case).
+            table.insert(serialized.warnings, "\'Belt output is full\'")
         end
 
         -- Special handling for underground belts

@@ -35,12 +35,17 @@ def _deduplicate_entities(entities: List[Entity]) -> List[Entity]:
     return list(reversed(unique_entities))
 
 
-# LOCAL PATCH (FLE defect #9): when a belt's output is backed up, serialize.lua
-# appends exactly this string to the belt's warnings. Upstream compared
-# `entity.warnings[0] == "full"`, which can never match (wrong index AND wrong
-# text) -- the FULL_OUTPUT branch was dead code, so a belt group carrying 269
-# ore still reported WORKING and the agent had no way to see the line was jammed.
-_BELT_FULL_OUTPUT_WARNING = "belt output is full"
+# LOCAL PATCH (FLE defect #9 / P0-18): when a belt's output is backed up,
+# serialize.lua appends "Belt output is full" to the belt's warnings. Upstream
+# compared `entity.warnings[0] == "full"` (wrong index AND wrong text) so the
+# FULL_OUTPUT branch was dead code.
+#
+# P0-18 (2026-10-08, found by the real-game belt rig): that fix was ALSO incomplete
+# in-game -- serialize.lua emitted the message WITHOUT quotes, and `dump` writes
+# string values unquoted, so the Python-side Lua decoder collapsed it to "full"
+# (the last bare token). The match below therefore accepts BOTH the canonical
+# string and the legacy mangled "full", after stripping any quote wrappers.
+_BELT_FULL_OUTPUT_WARNINGS = ("belt output is full", "full")
 
 
 def _entity_warning_strings(entity: Entity) -> List[str]:
@@ -51,10 +56,11 @@ def _entity_warning_strings(entity: Entity) -> List[str]:
 
 
 def _belt_is_full_output(entity: Entity) -> bool:
-    return any(
-        _BELT_FULL_OUTPUT_WARNING in warning.lower()
-        for warning in _entity_warning_strings(entity)
-    )
+    for warning in _entity_warning_strings(entity):
+        text = warning.strip().strip("'\"").strip().lower()
+        if text in _BELT_FULL_OUTPUT_WARNINGS:
+            return True
+    return False
 
 
 def _group_direction(entities: List[Entity]) -> Union[Direction, None]:
