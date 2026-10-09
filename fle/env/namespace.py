@@ -9,7 +9,7 @@ import types
 from difflib import get_close_matches
 from typing import Dict, List, Optional, Set, Tuple, Union
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from fle.commons.models.serializable_function import SerializableFunction
 from fle.env import entities as ent
@@ -1164,6 +1164,24 @@ class FactorioNamespace:
                     error_message += f"\n{error_type}"
                     if suggestions:
                         error_message += f"\nDid you mean one of these?\n{suggestions}"
+                elif isinstance(e, ValidationError):
+                    # Pydantic 的 ValidationError 默认只把定位信息压在一段
+                    # 多行文本里，traceback 最后一行甚至只剩那个 errors.pydantic.dev
+                    # URL，模型看不到是哪个字段、错成什么。这里展开 errors()。
+                    try:
+                        details = []
+                        for err in e.errors():
+                            loc = ".".join(str(part) for part in err.get("loc", ())) or "(root)"
+                            details.append(
+                                f"  - {loc}: {err.get('msg', 'invalid value')} "
+                                f"(got {err.get('input', None)!r})"
+                            )
+                        error_message += (
+                            "\nValidationError: invalid argument(s):\n"
+                            + "\n".join(details)
+                        )
+                    except Exception:
+                        error_message += f"\n{error_type}"
                 else:
                     error_message += f"\n{error_type}"
 

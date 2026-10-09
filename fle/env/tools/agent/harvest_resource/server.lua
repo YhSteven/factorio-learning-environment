@@ -249,9 +249,25 @@ local function find_entity_type_at_position(surface, position)
         radius = 1.5  -- Slightly larger radius to include entities at boundary
     }
 
-    if #exact_entities > 0 then
-        -- game.print("Found type ".. exact_entities[1].name)
-        return exact_entities[1].type, exact_entities[1].name
+    -- Pick the entity whose centre is closest to the requested position instead of
+    -- whatever the engine happens to list first. In a shared iron/copper ore band the
+    -- first entry can be a neighbouring tile of a *different* resource, so the
+    -- harvest silently mined the wrong ore while the caller believed it was the
+    -- target (nearest(Resource.IronOre) -> copper-ore in the backpack).
+    local closest = nil
+    local closest_dist = math.huge
+    for _, entity in ipairs(exact_entities) do
+        local dx = entity.position.x - position.x
+        local dy = entity.position.y - position.y
+        local dist = dx * dx + dy * dy
+        if dist < closest_dist then
+            closest_dist = dist
+            closest = entity
+        end
+    end
+
+    if closest then
+        return closest.type, closest.name
     end
     return nil, nil
 end

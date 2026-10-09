@@ -124,46 +124,51 @@ storage.actions.extract_item = function(player_index, extract_item, count, x, y,
         }
     end
 
-    -- Find the closest building with the item we want
+    -- Find the closest building with the item we want. Also remember the closest
+    -- building overall, so we can tell "there is no such entity" apart from
+    -- "the entity is right here, it just holds none of the requested item" -
+    -- the old code used the same "entity not found" message for both cases,
+    -- which made agents think a working furnace had been destroyed.
     local closest_distance = math.huge
     local closest_entity = nil
-    local found_any_items = false
+    local closest_any = nil
+    local closest_any_distance = math.huge
 
     for _, building in ipairs(buildings) do
         if building.name ~= 'character' then
-            local item_count = get_entity_item_count(building, extract_item)
-            if item_count > 0 then
-                found_any_items = true
-                local distance = ((position.x - building.position.x) ^ 2 +
-                                (position.y - building.position.y) ^ 2) ^ 0.5
-                if distance < closest_distance then
-                    closest_distance = distance
-                    closest_entity = building
-                end
+            local distance = ((position.x - building.position.x) ^ 2 +
+                            (position.y - building.position.y) ^ 2) ^ 0.5
+            if distance < closest_any_distance then
+                closest_any_distance = distance
+                closest_any = building
+            end
+            if get_entity_item_count(building, extract_item) > 0 and distance < closest_distance then
+                closest_distance = distance
+                closest_entity = building
             end
         end
     end
 
     -- Error handling in priority order
 
-    if #buildings == 0 then
-        error("\"Could not find any entities in range\"")
-    end
-
     if not closest_entity then
-        if source_name then
-            error("\"Could not find a valid "..source_name.." entity containing " .. extract_item.."\"")
+        if closest_any then
+            -- Entity exists, it just contains none of the requested item.
+            local where = "(" .. closest_any.position.x .. ", " .. closest_any.position.y .. ")"
+            if source_name then
+                error("\"Found a " .. source_name .. " at " .. where .. " but it contains no " .. extract_item .. " - use inspect_inventory to check what it holds, or put " .. extract_item .. " in first\"")
+            else
+                error("\"Found entities near " .. where .. " but none of them contain " .. extract_item .. "\"")
+            end
+        elseif source_name then
+            error("\"Could not find any " .. source_name .. " within " .. search_radius .. " tiles of (" .. position.x .. ", " .. position.y .. ")\"")
         else
-            error("\"Could not find a valid entity containing " .. extract_item .. "\"")
+            error("\"Could not find any entities within " .. search_radius .. " tiles of (" .. position.x .. ", " .. position.y .. ")\"")
         end
     end
 
     if closest_distance > search_radius then
         error("\"Entity at ("..closest_entity.position.x..", "..closest_entity.position.y..") is too far away from your position of ("..player.position.x..","..player.position.y.."), move closer.\"")
-    end
-
-    if not found_any_items then
-        error("\"No " .. extract_item .. " found in any nearby entities\"")
     end
 
     -- Calculate how many items we can actually extract
