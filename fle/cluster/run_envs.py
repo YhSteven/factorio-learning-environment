@@ -162,11 +162,16 @@ class ComposeGenerator:
         if not save_file_name.lower().endswith(".zip"):
             raise ValueError(f"Save file '{save_file}' is not a zip file.")
 
-        # Check that the zip contains a level.dat file
+        # Check that the zip contains level data. Factorio 2.0 publishes saves in a
+        # chunked layout (level.datmetadata + level.dat0..N) instead of a single
+        # level.dat, so match the basename prefix rather than the exact name --
+        # otherwise every 2.0-era save is rejected before it ever reaches the server.
         with zipfile.ZipFile(save_file, "r") as zf:
-            if "level.dat" not in zf.namelist():
+            if not any(
+                Path(name).name.startswith("level.dat") for name in zf.namelist()
+            ):
                 raise ValueError(
-                    f"Save file '{save_file}' does not contain a 'level.dat' file."
+                    f"Save file '{save_file}' does not contain a 'level.dat*' entry."
                 )
 
         shutil.copy2(save_file, save_dir / save_file_name)
