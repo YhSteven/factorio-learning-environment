@@ -229,6 +229,17 @@ local function has_electricity(entity)
     return true
 end
 
+-- LOCAL PATCH (P0-25 / docs/02 §7.48 C): electric PRODUCERS (steam engine = "generator",
+-- solar panel) do not *receive* electricity -- they feed it. `has_electricity` above keys on
+-- energy/buffer, so an idle-but-connected producer reads as "without electricity", and the
+-- old code then inserted 'not connected to power network' EVEN WHEN IT WAS CONNECTED
+-- (real game: idle steam engine with electrical_id=30 still warned). That wording is a lie and
+-- pushes the agent to burn steps re-running connect_entities. A producer is only genuinely
+-- "not connected" when it has no electric network id at all.
+local function is_electric_producer(entity)
+    return entity.type == "generator" or entity.type == "solar-panel"
+end
+
 -- Define a function to check if the entity (boiler) has necessary input liquid
 local function has_input_liquid(entity)
     if entity.type == "boiler" then
@@ -319,7 +330,13 @@ function storage.utils.get_issues(entity)
     end
 
     if not has_electricity(entity) then
-        if entity.electric_network_id and (entity.type ~= 'solar-panel' and entity.type ~= 'generator') then
+        if is_electric_producer(entity) then
+            -- Producers only when the network is genuinely missing. Being connected but idle
+            -- (no steam/water, no demand, night for solar) is normal and must NOT warn -- P0-25.
+            if not entity.electric_network_id then
+                table.insert(issues, "\'not connected to power network\'")
+            end
+        elseif entity.electric_network_id then
             table.insert(issues, "\'not receiving electricity\'")
         else
             table.insert(issues, "\'not connected to power network\'")
