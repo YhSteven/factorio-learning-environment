@@ -52,28 +52,36 @@ class GetEntity(Tool):
             )
             return entities[0] if len(entities) > 0 else None
         else:
-            try:
-                x, y = self.get_position(position)
-                name, metaclass = entity.value
-                while isinstance(metaclass, tuple):
-                    metaclass = metaclass[1]
+            x, y = self.get_position(position)
+            name, metaclass = entity.value
+            while isinstance(metaclass, tuple):
+                metaclass = metaclass[1]
 
-                sleep(0.05)
-                response, elapsed = self.execute(self.player_index, name, x, y)
+            sleep(0.05)
+            response, elapsed = self.execute(self.player_index, name, x, y)
 
-                if response is None or response == {} or isinstance(response, str):
-                    # No entity found at position - return None instead of raising
+            if isinstance(response, str):
+                # LOCAL PATCH (P0-21): 原来把「Lua 报错串」与「该格无实体」一律
+                # return None —— 真正的执行错误（原型不存在、内部异常）被静默吞成
+                # 「这格没有实体」，模型据此判断空格/被毁，属 A5 同族。
+                # 只有 Lua 明说的「该格无此实体」才返回 None（FLE 缺陷 #7 语义），
+                # 其余错误串一律抛出并保留完整原因。
+                msg = self.get_error_message(response)
+                if "found at the specified position" in msg:
                     return None
+                raise Exception(f"Could not get {name} at ({x}, {y}): {msg}")
 
-                cleaned_response = self.clean_response(response)
-                try:
-                    object = metaclass(prototype=entity.name, **cleaned_response)
-                except Exception as e:
-                    raise Exception(
-                        f"Could not create {name} object from response (get entity): {cleaned_response}",
-                        e,
-                    )
+            if response is None or response == {}:
+                # No entity found at position - return None instead of raising
+                return None
 
-                return object
+            cleaned_response = self.clean_response(response)
+            try:
+                object = metaclass(prototype=entity.name, **cleaned_response)
             except Exception as e:
-                raise Exception(f"Could not get {entity} at position {position}", e)
+                raise Exception(
+                    f"Could not create {name} object from response (get entity): {cleaned_response}",
+                    e,
+                )
+
+            return object

@@ -45,12 +45,18 @@ class CanPlaceEntity(Tool):
                 # every error was silently converted to `False`, which made
                 # "no item in inventory" indistinguishable from "position
                 # blocked" and pushed agents into brute-forcing positions.
-                # Surface the inventory case as a readable error instead.
+                #
+                # LOCAL PATCH (P0-21 / A5 residual): the non-inventory branch
+                # also swallowed the reason and returned False, so "too far" /
+                # "water" / "collision" all looked like a generic blocked tile.
+                # Surface the FULL message for every failure. The server side
+                # only ever returns `true` or raises, so a raising contract is
+                # also the honest one (documented in MANUAL §12).
                 message = self.get_error_message(response)
                 if "in inventory" in message:
                     raise Exception(
                         f"can_place_entity: {message} "
                         f"(the position itself may be fine - obtain a {name} first)"
                     )
-                return False
+                raise Exception(f"can_place_entity: {message}")
         return True

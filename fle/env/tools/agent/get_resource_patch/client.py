@@ -29,10 +29,11 @@ class GetResourcePatch(Tool):
         )
 
         if not isinstance(response, dict) or response == {}:
-            top_level_message = str(response).split(":")[-1].strip()
-            raise Exception(
-                f"Could not get {resource[0]} at {position}: {top_level_message}"
-            )
+            # LOCAL PATCH (P0-21): 原 split(":")[-1] 在报文含内嵌冒号（如
+            # `No resource of type coal: at the specified location.`）时只留尾段，
+            # 丢掉「什么类型的矿 / 哪里」这类原因头部。改用 get_error_message。
+            reason = self.get_error_message(str(response))
+            raise Exception(f"Could not get {resource[0]} at {position}: {reason}")
 
         left_top = Position(
             x=response["bounding_box"]["left_top"]["x"],

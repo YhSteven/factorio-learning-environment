@@ -1,0 +1,17 @@
+-- shift_entity has NO Lua action of its own.
+--
+-- Its client (client.py) implements the move entirely by composing three other
+-- registered tools -- pickup_entity -> can_place_entity -> place_entity -- and
+-- never calls self.execute, so there is nothing to run on the game side.
+--
+-- Why this file exists at all (LOCAL PATCH, P0-22):
+--   lua_manager.setup_tools() registers a tool directory ONLY when it contains
+--   BOTH client.py and server.lua. shift_entity used to have client.py only, so
+--   it was silently dropped from the agent namespace while the guard/whitelist
+--   and SYSTEM prompt still advertised it -- any call died with
+--   `NameError: name 'shift_entity' is not defined` (seen in bunny / glm / ide
+--   trajectories, docs/02 §7.44 B). This empty stub makes the directory valid so
+--   the composed client gets registered again.
+--
+-- (No `storage.actions.shift_entity` is defined on purpose -- the client does
+--  not dispatch to Lua.)

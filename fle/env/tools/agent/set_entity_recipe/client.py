@@ -31,9 +31,11 @@ class SetEntityRecipe(Tool):
         response, elapsed = self.execute(self.player_index, name, x, y)
 
         if not isinstance(response, dict):
-            raise Exception(
-                f"Could not set recipe to {name}" + str(response).split(":")[-1].strip()
-            )
+            # LOCAL PATCH (P0-21): 原写法有两处问题 —— ① split(":")[-1] 吞掉原因头部；
+            # ② "set recipe to {name}" 与后缀之间**缺分隔符** ⇒ 文案粘连
+            # （实测 `…iron-plateassembler needs a recipe first"`）。改用 get_error_message 并补冒号。
+            reason = self.get_error_message(str(response))
+            raise Exception(f"Could not set recipe to {name}: {reason}")
 
         cleaned_response = self.clean_response(response)
 

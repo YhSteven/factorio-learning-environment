@@ -24,7 +24,14 @@ class LaunchRocket(Tool):
             position = silo.position
 
         try:
-            response, _ = self.execute(self.player_index, position.x, position.y)
+            # LOCAL PATCH (P0-21): client used to pass 3 arguments
+            # (player_index, x, y) while the Lua action is `function(x, y)`.
+            # Lua silently binds the extra first arg to x, so the silo lookup
+            # ran at (player_index, position.x) instead of (position.x,
+            # position.y) -- the launch always targeted the wrong place (and the
+            # path was never exercised, so it stayed latent). Pass exactly the
+            # two coordinates the Lua action expects.
+            response, _ = self.execute(position.x, position.y)
             return cast(
                 Prototype.RocketSilo, self.get_entity(Prototype.RocketSilo, position)
             )

@@ -1182,6 +1182,19 @@ class FactorioNamespace:
                         )
                     except Exception:
                         error_message += f"\n{error_type}"
+                elif isinstance(e, TypeError) and "positional argument" in str(e):
+                    # P0-23: pydantic BaseModel.__init__ rejects positional args
+                    # with an opaque message ("takes 1 positional argument but 3
+                    # were given") that never says how to fix it. Agents hit this
+                    # 15x in the sampled trajectories (e.g. BuildingBox(2, 2)).
+                    error_message += (
+                        f"\n{error_type}"
+                        "\nHint: most FLE model classes take KEYWORD arguments only "
+                        "(e.g. BuildingBox(width=2, height=2), "
+                        "Dimensions(width=1, height=1)) -- rewrite the call with "
+                        "keywords. (Position is the exception: Position(x=1, y=2) "
+                        "and Position(1, 2) both work.)"
+                    )
                 else:
                     error_message += f"\n{error_type}"
 

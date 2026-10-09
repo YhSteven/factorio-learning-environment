@@ -60,8 +60,11 @@ class InsertItem(Tool):
                     if (
                         "Could not find" not in response
                     ):  # Don't raise if belt is just full
+                        # LOCAL PATCH (P0-21): 原 split(":")[-1] 只取「最后一个冒号之后」，
+                        # 把 "No X to insert from your inventory" / "furnace already contains …"
+                        # 等可读原因头部整段吞掉。改用 get_error_message 完整保留原因。
                         raise Exception(
-                            "Could not insert: " + response.split(":")[-1].strip()
+                            "Could not insert: " + self.get_error_message(response)
                         )
                     break
 
@@ -91,7 +94,8 @@ class InsertItem(Tool):
         )
 
         if isinstance(response, str):
-            raise Exception(f"Could not insert: {response.split(':')[-1].strip()}")
+            # LOCAL PATCH (P0-21): 同 BeltGroup 分支 —— 用 get_error_message 保留原因头部。
+            raise Exception(f"Could not insert: {self.get_error_message(response)}")
 
         cleaned_response = self.clean_response(response)
         if isinstance(cleaned_response, dict):

@@ -53,7 +53,10 @@ class HarvestResource(Tool):
             sleep(real_world_sleep)
 
         if response != {} and response == 0 or isinstance(response, str):
-            msg = response.split(":")[-1].strip()
+            # LOCAL PATCH (P0-21): 原 split(":")[-1] 把「Nothing within reach to harvest: …」
+            # 的类别前缀吞掉，只剩坐标/距离 ⇒ 模型看不出是「够不着」还是「没资源」。
+            # 改用 get_error_message 完整保留原因。
+            msg = self.get_error_message(response) if isinstance(response, str) else response
             raise Exception(f"Could not harvest. {msg}")
 
         # If `fast` is turned off - we need to long poll the game state to ensure the player has moved
