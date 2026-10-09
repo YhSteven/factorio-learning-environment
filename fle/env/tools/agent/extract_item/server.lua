@@ -1,45 +1,14 @@
 -- Helper function to check all possible inventories of an entity
+--
+-- LOCAL PATCH (P0-24, docs/02 §7.46 B): 原实现把 `entity.get_item_count(item_name)`
+-- 放在「遍历 inventory 槽位」的循环体内累加 —— 但 `entity.get_item_count()` 返回的**本来就是
+-- 该实体全部 inventory 的合计** ⇒ 同一个实体被按「它存在的槽位数 N」重复计数（实测石炉 N=7、
+-- 木箱 N=2），使 available_count 虚高 N 倍；再经 `extract_count` → `player.insert(stack)`
+-- 变成**凭空复制物品**（红线级：突破资源守恒）。
+-- `entity.get_item_count(name)` 单次调用即为正确合计，且不依赖「哪些槽位存在」的枚举，
+-- 故这里直接返回它（原 30 项 inventory_types 枚举已删除）。
 local function get_entity_item_count(entity, item_name)
-    local inventory_types = {
-        defines.inventory.chest,
-        defines.inventory.furnace_source,
-        defines.inventory.furnace_result,
-        defines.inventory.assembling_machine_input,
-        defines.inventory.assembling_machine_output,
-        defines.inventory.fuel,
-        defines.inventory.burnt_result,
-        defines.inventory.reactor_source,
-        defines.inventory.reactor_result,
-        defines.inventory.lab_input,
-        defines.inventory.lab_source,
-        defines.inventory.mining_drill_input,
-        defines.inventory.item_main,  -- For cargo wagons
-        defines.inventory.robot_cargo,
-        defines.inventory.robot_repair,
-        defines.inventory.car_trunk,
-        defines.inventory.car_fuel,
-        defines.inventory.roboport_material,
-        defines.inventory.roboport_robot,
-        defines.inventory.storage_tank,
-        defines.inventory.artillery_turret_ammo,
-        defines.inventory.turret_ammo,
-        defines.inventory.beacon_modules,
-        defines.inventory.character_main,
-        defines.inventory.character_guns,
-        defines.inventory.character_ammo,
-        defines.inventory.character_armor,
-        defines.inventory.character_vehicle,
-        defines.inventory.character_trash
-    }
-
-    local total_count = 0
-    for _, inv_type in ipairs(inventory_types) do
-        local inventory = entity.get_inventory(inv_type)
-        if inventory then
-            total_count = total_count + entity.get_item_count(item_name)
-        end
-    end
-    return total_count
+    return entity.get_item_count(item_name)
 end
 
 -- Helper function to remove items from any valid inventory
@@ -175,20 +144,20 @@ storage.actions.extract_item = function(player_index, extract_item, count, x, y,
     local available_count = get_entity_item_count(closest_entity, extract_item)
     local extract_count = math.min(count, available_count)
 
-    -- Create the stack for extraction
-    local stack = {name=extract_item, count=extract_count}
-
     -- Attempt the extraction
-    local number_extracted = remove_items_from_entity(closest_entity, stack)
+    local number_extracted = remove_items_from_entity(
+        closest_entity, {name = extract_item, count = extract_count})
 
     if number_extracted > 0 then
-        -- Insert items into player inventory
-        local inserted = player.insert(stack)
+        -- LOCAL PATCH (P0-24, docs/02 §7.46 B): 入包量必须等于**真实从实体移除的量**
+        -- number_extracted。原实现写的是 `player.insert(stack)`，而 `stack.count` 是
+        -- 「计划量」extract_count —— 只要它大于实体真实持有量，差额就被**凭空生成**
+        -- （玩家白得物品，突破资源守恒）。回滚判断同样必须基于真实量，现已天然成立。
+        local inserted = player.insert({name = extract_item, count = number_extracted})
 
         -- If we couldn't insert all items, put them back in the container
         if inserted < number_extracted then
-            stack.count = number_extracted - inserted
-            closest_entity.insert(stack)
+            closest_entity.insert({name = extract_item, count = number_extracted - inserted})
             number_extracted = inserted
         end
 
