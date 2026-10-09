@@ -451,12 +451,28 @@ class Technology(enum.Enum):
 technology_by_name = {tech.value: tech for tech in Technology}
 
 
+class _ResourceType(tuple):
+    """Resource 条目：保持 tuple 语义（`name, cls = Resource.Coal` / `Resource.Coal[0]`
+    全部照旧），同时补上 `Prototype.X` 同款的 `.value`。
+
+    LOCAL PATCH (P0-16 / docs/02 §7.36 C3): 原来 `Resource.X` 是裸 tuple、没有
+    `.value`，而 `Prototype.X` 是 Enum 成员（有 `.value`）。模型把两者放进同一循环
+    访问 `.value` 时，`Resource.X.value` 抛 `AttributeError` 并中断整步（真实局复现）。
+    这里让 `.value` 返回自身（即 `(name, entity_class)`），与 `Prototype.X.value` 同形，
+    消除模型面不一致，且不破坏任何既有的下标 / 解包写法。
+    """
+
+    @property
+    def value(self):
+        return self
+
+
 class Resource:
-    Coal = "coal", ent.ResourcePatch
-    IronOre = "iron-ore", ent.ResourcePatch
-    CopperOre = "copper-ore", ent.ResourcePatch
-    Stone = "stone", ent.ResourcePatch
-    Water = "water", ent.ResourcePatch
-    CrudeOil = "crude-oil", ent.ResourcePatch
-    UraniumOre = "uranium-ore", ent.ResourcePatch
-    Wood = "wood", ent.ResourcePatch
+    Coal = _ResourceType(("coal", ent.ResourcePatch))
+    IronOre = _ResourceType(("iron-ore", ent.ResourcePatch))
+    CopperOre = _ResourceType(("copper-ore", ent.ResourcePatch))
+    Stone = _ResourceType(("stone", ent.ResourcePatch))
+    Water = _ResourceType(("water", ent.ResourcePatch))
+    CrudeOil = _ResourceType(("crude-oil", ent.ResourcePatch))
+    UraniumOre = _ResourceType(("uranium-ore", ent.ResourcePatch))
+    Wood = _ResourceType(("wood", ent.ResourcePatch))

@@ -850,11 +850,21 @@ class HeatExchanger(Boiler):
     """A nuclear heat exchanger that converts water to steam."""
 
 
-class Generator(FluidHandler, StaticEntity):
-    """A steam generator that produces electricity."""
+class Generator(FluidHandler, ElectricalProducer):
+    """A steam generator that produces electricity.
 
-    _height: float = 3
-    _width: float = 5
+    LOCAL PATCH (P0-16 / docs/02 §7.36 C5): 原来继承 `(FluidHandler, StaticEntity)`
+    ⇒ 模型面缺 `electrical_id`（未挂 `Electric`）与 `production`（未挂
+    `ElectricalProducer`），实测 `eng.electrical_id` 直接 `AttributeError`。
+    改为挂上 `ElectricalProducer`（其基类含 `Electric`）后两者齐备，
+    与 `SolarPanel` / `Pump` 等电力实体口径一致。
+
+    同时修正 `_height/_width`：steam-engine 原型 `tile_width=3 / tile_height=5`
+    （B2 真实局 repr 实测 `height=5.0, width=3.0`），原类定义 3/5 恰好写反。
+    """
+
+    _height: float = 5
+    _width: float = 3
 
 
 class Pump(FluidHandler, Electric):
