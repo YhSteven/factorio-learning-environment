@@ -251,6 +251,25 @@ class FactorioNamespace:
             print(f"Error restoring namespace: {e}")
             pass
 
+    @staticmethod
+    def _iter_assign_target_names(target):
+        """Yield every `ast.Name` leaf bound by an assignment target.
+
+        LOCAL PATCH (FLE defect #43): the `ast.Assign` branch used to collect only
+        top-level `ast.Name` targets, so `a, b = ...` (a Tuple/List target) never had
+        its names added to `new_or_updated_keys`. Combined with the "only persist keys
+        that are new" rule, a *re-assignment* through an unpacking target was silently
+        dropped (and the next node's `eval_dict.update(persistent_vars)` restored the
+        old values). Recursing into Tuple/List/Starred fixes that.
+        """
+        if isinstance(target, ast.Name):
+            yield target.id
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            for elt in target.elts:
+                yield from FactorioNamespace._iter_assign_target_names(elt)
+        elif isinstance(target, ast.Starred):
+            yield from FactorioNamespace._iter_assign_target_names(target.value)
+
     def _assign_target(self, target, value, eval_dict):
         """Helper function to handle different types of assignment targets"""
         if isinstance(target, ast.Name):
@@ -663,9 +682,11 @@ class FactorioNamespace:
 
         elif isinstance(node, ast.Assign):
             # Check if any explicit targets would shadow protected names
+            # LOCAL PATCH (FLE defect #43): recurse into Tuple/List targets so
+            # `a, b = ...` is checked too (previously only bare `ast.Name` targets were).
             for t in node.targets:
-                if isinstance(t, ast.Name):
-                    self._check_protected(t.id)
+                for tname in self._iter_assign_target_names(t):
+                    self._check_protected(tname)
 
             # Get the original eval_dict keys before execution
             original_keys = set(eval_dict.keys())
@@ -678,7 +699,13 @@ class FactorioNamespace:
             new_or_updated_keys = set()
 
             # Check explicit targets
-            targets = [t.id for t in node.targets if isinstance(t, ast.Name)]
+            # LOCAL PATCH (FLE defect #43): collect the names inside Tuple/List
+            # targets as well, otherwise re-assignment through unpacking
+            # (`a, b = b, a` / `[a, b] = [8, 9]`) is not persisted and the next
+            # node silently reverts to the old values.
+            targets = []
+            for t in node.targets:
+                targets.extend(self._iter_assign_target_names(t))
             new_or_updated_keys.update(targets)
 
             # Also check for any new variables that might have been created by function calls
