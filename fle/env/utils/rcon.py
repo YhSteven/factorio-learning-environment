@@ -49,6 +49,34 @@ def _get_dir(name="tools"):
     return path + f"/{name}"
 
 
+_SKIPPED_TOOL_DIRS: set[str] = set()
+
+
+def _report_skipped_tool_dirs(dirpath: str, server_file: str, client_file: str) -> None:
+    """LOCAL PATCH (FLE defect #50): make skipped tool directories visible.
+
+    A directory only counts as a tool when it has **both** `server.lua` and
+    `client.py`. `lua_manager.setup_tools` and `_get_tool_names` (below) both
+    filter on that, and used to do it **silently** -- so a tool that is on disk
+    (e.g. `inspect_entities`, `get_messages`) looked available while it was never
+    registered (the "probe vs reality" family, cf. F6b / docs/06 #50). Warn once
+    per directory per process so repeated re-init does not flood the log.
+    """
+    has_server = os.path.isfile(server_file)
+    has_client = os.path.isfile(client_file)
+    if not has_server and not has_client:
+        return  # not a tool directory at all -- stay quiet
+    if dirpath in _SKIPPED_TOOL_DIRS:
+        return
+    _SKIPPED_TOOL_DIRS.add(dirpath)
+    print(
+        "WARNING: skipping tool directory "
+        f"'{dirpath}': it has {'server.lua' if has_server else 'client.py'} "
+        f"but no {'client.py' if has_server else 'server.lua'} "
+        "-- the tool is NOT registered and its Lua is NOT pushed"
+    )
+
+
 def _get_tool_names(name="tools") -> List[str]:
     tool_dir = _get_dir(name)
     lua_files = []
@@ -70,6 +98,9 @@ def _get_tool_names(name="tools") -> List[str]:
                     # Get the relative path from tool_dir
                     full_path = os.path.join(dirpath, filename)
                     lua_files.append(full_path)
+        else:
+            # LOCAL PATCH (FLE defect #50): was a silent skip.
+            _report_skipped_tool_dirs(dirpath, server_file, client_file)
 
     return lua_files
 

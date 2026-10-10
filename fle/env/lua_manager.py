@@ -15,6 +15,7 @@ from fle.env.utils.rcon import (
     _get_tool_names,
     _load_mods,
     _load_script,
+    _report_skipped_tool_dirs,
 )
 
 
@@ -280,6 +281,11 @@ class LuaScriptManager:
                     raise Exception(
                         f"Could not instantiate {class_name} from {client_file}. {e}"
                     )
+            else:
+                # LOCAL PATCH (FLE defect #50): a tool directory missing `server.lua`
+                # or `client.py` used to be dropped with no message at all, so the
+                # tool silently disappeared from the model's tool face.
+                _report_skipped_tool_dirs(dirpath, server_file, client_file)
 
     @staticmethod
     def register_post_tool_hook(instance, tool_name, callback=None):
