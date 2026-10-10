@@ -196,7 +196,11 @@ def consolidate_underground_belts(belt_groups):
 
         for i, belt in enumerate(group.belts):
             if isinstance(belt, UndergroundBelt):
-                if belt.connected_to:
+                # LOCAL PATCH (F1 / #33): 原为 `if belt.connected_to:` →
+                # `underground_pairs[belt.connected_to]`。当对端地下带**不在本组**
+                # （越出查询框 / 被切到另一组）时，键不存在 ⇒ KeyError 冒泡成
+                # `get_entities` 整条失败（F1 的第二个卡点：消息就是一个整数 id）。
+                if belt.connected_to and belt.connected_to in underground_pairs:
                     underground_pairs[belt.connected_to]["exit"] = belt
                     underground_pairs[belt.id]["entrance"] = belt
 

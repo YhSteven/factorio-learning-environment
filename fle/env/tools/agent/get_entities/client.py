@@ -148,13 +148,22 @@ class GetEntities(Tool):
 
                 try:
                     if "inventory" in entity_data:
-                        if isinstance(entity_data["inventory"], list):
-                            for inv in entity_data["inventory"]:
-                                entity_data["inventory"] += inv
+                        inventory = entity_data["inventory"]
+                        if isinstance(inventory, list):
+                            # LOCAL PATCH (F1 / #33): 原实现在此 `for inv in inventory:
+                            # inventory += inv` —— 一边遍历一边用 `+=` 扩展**同一个 list**。
+                            # `list += <dict>` 会以 dict 的**键**扩展（不是值），随后键
+                            # （字符串）又被逐字符扩展 ⇒ 该 list 无限增长 = 死循环 + 内存暴涨。
+                            # 这就是「从存档起的沙盒上 observe/exec 永不返回」的根因：
+                            # 触发者 = inventory 序列化成**数组**的实体（splitter /
+                            # fast-splitter 的两条运输线 → [ {...}, {...} ]）。
+                            # Splitter 模型本就声明 `inventory: List[Inventory]` ⇒ 原样
+                            # 保留即可（不再是卡死点，也不改变其语义）。
+                            pass
                         else:
                             inventory_data = {
                                 k: v
-                                for k, v in entity_data["inventory"].items()
+                                for k, v in inventory.items()
                                 if v or isinstance(v, int)
                             }
                             entity_data["inventory"] = inventory_data
