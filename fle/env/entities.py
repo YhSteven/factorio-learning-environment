@@ -660,22 +660,22 @@ class Electric(BaseModel):
 class ElectricalProducer(Electric, Entity):
     """An entity that generates electrical power."""
 
-    production: Optional[Any] = {}
-    energy_source: Optional[Any] = {}
-    electric_output_flow_limit: Optional[float] = 0
-
-
-class EnergySource(BaseModel):
-    buffer_capacity: str
-    input_flow_limit: str
-    output_flow_limit: str
-    drain: str
+    # LOCAL PATCH (FLE defect #48): `production` is now actually written by
+    # `serialize.lua` (`{ energy_generated_last_tick = ... }`) for every electric
+    # producer, so it carries a real value. `energy_source` /
+    # `electric_output_flow_limit` were removed here: Lua never filled them and
+    # `electric_output_flow_limit` no longer exists in Factorio 2.0 at all, so the
+    # model could only ever read a fake constant. Add them back **together with** a
+    # Lua-side write if they are ever needed.
+    production: Optional[Dict[str, Any]] = {}
 
 
 class Accumulator(StaticEntity, Electric):
     """Represents an energy storage device"""
 
-    energy_source: Optional[EnergySource] = None
+    # LOCAL PATCH (FLE defect #48): `energy_source` removed -- never written by
+    # `serialize.lua` (the write is commented out upstream) and the useful number
+    # (`energy`, stored charge) is already serialized below.
     _height: float = 2
     _width: float = 2
 
@@ -691,6 +691,17 @@ class Inserter(StaticEntity, Electric):
 
 
 class Filtered(BaseModel):
+    """Base class for entities whose item filter can be set.
+
+    LOCAL PATCH (FLE defect #48): `filter` is **kept on purpose** even though
+    `serialize.lua` never writes it -- `env/tools/agent/set_entity_recipe/client.py`
+    populates it for filter inserters ("filter" in entity.name), so it is real
+    tool-maintained model state, not a fake constant. Residual caveat: an entity
+    coming straight from `get_entities` has no filter data (upstream never wired a
+    Lua-side read; 2.0 exposes slot-based `entity.get_filter(i)` if that is ever
+    wanted).
+    """
+
     filter: Optional[Any] = None
 
 
@@ -744,7 +755,7 @@ class GunTurret(StaticEntity):
     turret_ammo: Inventory = Inventory()
     _height: float = 2
     _width: float = 2
-    kills: Optional[int] = 0
+    # LOCAL PATCH (FLE defect #48): `kills` removed (Lua never wrote it ⇒ always 0).
 
 
 class AssemblingMachine(StaticEntity, Electric):
@@ -779,8 +790,10 @@ class AdvancedAssemblingMachine(FluidHandler, AssemblingMachine):
 class MultiFluidHandler(StaticEntity):
     """Base class for entities that handle multiple fluid types."""
 
-    input_fluids: List[str] = []
-    output_fluids: List[str] = []
+    # LOCAL PATCH (FLE defect #48): `input_fluids` / `output_fluids` removed -- Lua
+    # never wrote them (the real data is in `input_connection_points` /
+    # `output_connection_points` / `fluid_box` below), so the model saw two always-
+    # empty lists.
     input_connection_points: List[IndexedPosition] = []
     output_connection_points: List[IndexedPosition] = []
     fluid_box: Optional[Union[dict, list]] = []
@@ -934,7 +947,7 @@ class RocketSilo(StaticEntity, Electric):
     """A rocket silo that can build and launch rockets."""
 
     rocket_parts: int = 0  # Number of rocket parts currently assembled
-    rocket_inventory: Inventory = Inventory()  # Holds satellite or other payload
+    # LOCAL PATCH (FLE defect #48): `rocket_inventory` removed (Lua never wrote it).
     rocket_progress: float = 0.0  # Progress of current rocket construction (0-100)
     # Factorio 2.0: launch_count removed (no longer available on LuaEntity)
     _width: float = 9
@@ -948,14 +961,16 @@ class RocketSilo(StaticEntity, Electric):
 
 
 class Rocket(Entity):
-    """A rocket that can be launched from a silo."""
+    """A rocket that can be launched from a silo.
 
-    payload: Optional[Inventory] = None
-    launch_progress: float = 0.0  # Progress of launch sequence (0-100)
+    LOCAL PATCH (FLE defect #48): `payload` / `launch_progress` removed -- `serialize.lua`
+    never wrote them, so they were permanent fake constants (the progress number is
+    already exposed as `RocketSilo.rocket_progress`). Re-adding them requires a
+    Lua-side write of the silo's `entity.rocket`.
+    """
 
     def __repr__(self) -> str:
-        payload_str = f", payload={self.payload}" if self.payload else ""
-        return f"\n\tRocket(status={self.status}, launch_progress={self.launch_progress:.1f}%{payload_str})"
+        return f"\n\tRocket(status={self.status})"
 
 
 class Lab(Entity, Electric):
@@ -1091,7 +1106,9 @@ class ElectricityGroup(EntityGroup):
 class LogisticChest(Chest):
     """Logistic chest for robot networks (all 5 types use this class)"""
 
-    request_filters: List[Any] = []
+    # LOCAL PATCH (FLE defect #48): `request_filters` removed -- Lua never wrote it
+    # (always `[]`, i.e. "no requests", regardless of the real request slots).
+    # Re-adding it requires a Lua-side write (slot-based `entity.get_request_slot(i)`).
 
 
 class Beacon(StaticEntity, Electric):
@@ -1153,6 +1170,6 @@ class FluidTurret(GunTurret, FluidHandler):
 class Vehicle(Entity, BurnerType):
     """Vehicle (car, tank, spidertron)"""
 
-    trunk_inventory: Inventory = Inventory()
+    # LOCAL PATCH (FLE defect #48): `trunk_inventory` removed (Lua never wrote it).
     _height: float = 2
     _width: float = 2

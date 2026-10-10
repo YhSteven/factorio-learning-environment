@@ -1286,6 +1286,20 @@ storage.utils.serialize_entity = function(entity)
         --serialized.power_production = entity.power_production
     end
 
+    -- LOCAL PATCH (FLE defect #48): `production` used to be a "fake field" on the
+    -- Python side -- declared on ElectricalProducer but never written here, so the
+    -- model could only ever read an empty dict. The real number is
+    -- `energy_generated_last_tick` (written above for generators), so expose it
+    -- under `production` for *any* electric producer (generator / solar panel /
+    -- burner-generator / fusion generator / ...). pcall-guarded because not every
+    -- entity type has the property (2.0 removed some energy-source fields, see #12).
+    local has_production, generated = pcall(function()
+        return entity.energy_generated_last_tick
+    end)
+    if has_production and generated ~= nil then
+        serialized.production = { energy_generated_last_tick = generated }
+    end
+
     if entity.name == "pumpjack" then
         serialized.connection_points = storage.utils.get_pumpjack_connection_points(entity)
     end
