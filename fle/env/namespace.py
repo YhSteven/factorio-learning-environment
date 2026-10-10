@@ -662,6 +662,10 @@ class FactorioNamespace:
                     func.__annotations__ = getattr(node, "__annotations__")
 
                 serialized_func = SerializableFunction(func, self)
+                # LOCAL PATCH (FLE defect #46): hand the live eval namespace to the
+                # wrapper so `global x; x = ...` inside the function writes through to
+                # the namespace being evaluated (CPython module-globals semantics).
+                serialized_func.bind(self, eval_dict)
                 self.persistent_vars[node.name] = serialized_func
                 setattr(self, node.name, serialized_func)
                 eval_dict[node.name] = serialized_func
@@ -826,11 +830,17 @@ class FactorioNamespace:
                     # Call the function and let exceptions propagate
                     response = func(*args, **kwargs)
 
-                    # After function call, sync any changes from SerializableFunction globals back to eval_dict
+                    # After function call, sync any changes from SerializableFunction
+                    # globals back to eval_dict.
+                    # LOCAL PATCH (FLE defect #46): the wrapper now normally shares the
+                    # live eval namespace as its `__globals__` (see `bind`), so writes
+                    # are already visible and the generic per-node write-back handles
+                    # persistence. This legacy hack is kept only as a fallback for
+                    # wrappers that never received a live globals dict.
                     if (
                         isinstance(func, SerializableFunction)
-                        and hasattr(func, "_cached_func")
-                        and func._cached_func
+                        and getattr(func, "_globals_dict", None) is None
+                        and getattr(func, "_cached_func", None)
                     ):
                         # Get the function's globals and update our eval_dict with any changes
                         func_globals = func._cached_func.__globals__
@@ -1092,6 +1102,44 @@ class FactorioNamespace:
             exec(compiled, eval_dict)
             return True
 
+    @staticmethod
+    def _changed(old, new) -> bool:
+        """True when `new` should replace `old` in `persistent_vars`."""
+        if old is new:
+            return False
+        try:
+            if old == new:
+                return False
+        except Exception:  # noqa: BLE001 — exotic __eq__ (arrays, pydantic, …)
+            pass
+        # `x == x` may still be False (NaN, weird __eq__) ⇒ fall back to identity,
+        # which was already checked above; reaching here means "treat as changed".
+        return True
+
+    def _sync_eval_changes_back(self, eval_dict):
+        """Write namespace-level changes made by the last node back to persistent_vars.
+
+        LOCAL PATCH (FLE defect #46): `ast.Assign`/`AugAssign` already persist their
+        explicit targets, but a name changed *inside a called function* (via `global`)
+        or by a node without a dedicated branch lives only in `eval_dict`. Before the
+        interpreter used a throw-away globals copy per call and patched this up with a
+        one-off hack in the `ast.Expr` branch only. Now `SerializableFunction` gets the
+        live `eval_dict` (see `reconstruct`), so this single generic write-back makes
+        both paths behave like CPython module globals.
+
+        Only names already tracked in `persistent_vars` are considered -- builtins /
+        namespace attributes restored from `dir(self)` must never be written back.
+        """
+        for name, value in list(eval_dict.items()):
+            if name.startswith("_"):
+                continue
+            if name not in self.persistent_vars:
+                continue
+            old = self.persistent_vars[name]
+            if self._changed(old, value):
+                self.persistent_vars[name] = wrap_for_serialization(value)
+                setattr(self, name, value)
+
     def eval_with_timeout(self, expr):
         """
         Executes a Python expression with a timeout and returns the result.
@@ -1139,10 +1187,13 @@ class FactorioNamespace:
             **self.persistent_vars,
         }
 
-        # Bind any SerializableFunction objects
+        # Bind any SerializableFunction objects.
+        # LOCAL PATCH (FLE defect #46): pass the live eval namespace so the function's
+        # `__globals__` IS this dict -- module-level (global) rebinding then lands here.
         for key, value in eval_dict.items():
             if isinstance(value, SerializableFunction):
-                eval_dict[key] = value.bind(self)
+                value.bind(self, eval_dict)
+                eval_dict[key] = value
 
         last_successful_state = None
 
@@ -1233,11 +1284,18 @@ class FactorioNamespace:
                 # if self._sequential_exception_count >= self.max_sequential_exception_count:
                 break
 
+            # LOCAL PATCH (FLE defect #46): push any namespace-level change the node
+            # made (in particular `global x` rebinding inside a called function, which
+            # now writes straight into eval_dict) back into persistent_vars BEFORE the
+            # update below would otherwise clobber it with the stale value.
+            self._sync_eval_changes_back(eval_dict)
+
             eval_dict.update(self.persistent_vars)
             # Re-bind any new SerializableFunction objects after dict update
             for key, value in eval_dict.items():
                 if isinstance(value, SerializableFunction):
-                    eval_dict[key] = value.bind(self)
+                    value.bind(self, eval_dict)
+                    eval_dict[key] = value
 
         score, automated_score = self.score()
         result_output = parse_result_into_str(self.logging_results)

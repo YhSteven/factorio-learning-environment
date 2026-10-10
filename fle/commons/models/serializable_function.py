@@ -58,6 +58,11 @@ class SerializableFunction:
         # These won't be pickled
         self._instance = instance
         self._cached_func = None
+        # LOCAL PATCH (FLE defect #46): the *live* globals dict of the namespace
+        # currently evaluating (set by `bind`). When present, `reconstruct` uses it
+        # directly instead of building a throw-away copy, so `global x; x = ...`
+        # inside the function writes back to the caller's namespace.
+        self._globals_dict = None
 
     def __getstate__(self):
         """Control which attributes are pickled"""
@@ -116,9 +121,17 @@ class SerializableFunction:
 
         return result
 
-    def bind(self, instance):
-        """Bind this function to an instance after unpickling"""
+    def bind(self, instance, globals_dict=None):
+        """Bind this function to an instance after unpickling
+
+        LOCAL PATCH (FLE defect #46): `globals_dict` may be the live eval namespace
+        of the current step. `reconstruct` then uses it as the function's `__globals__`
+        so module-level rebinding inside the function (e.g. `global x; x = x + 1`)
+        is visible to the rest of the step instead of being written to a copy that
+        is thrown away. Defaults to None ⇒ legacy behaviour (build a fresh dict).
+        """
         self._instance = instance
+        self._globals_dict = globals_dict
         self._cached_func = None
         return self
 
@@ -133,21 +146,30 @@ class SerializableFunction:
     @staticmethod
     def reconstruct(instance, func_data):
         """Reconstruct a function with proper globals from the instance"""
-        globals_dict = {}
+        # LOCAL PATCH (FLE defect #46): if the namespace handed us its live eval
+        # namespace (see `bind`), use it as `__globals__` verbatim -- writes to
+        # module-level names then land in the namespace that is actually being
+        # evaluated, so `global x; x = ...` behaves like CPython.
+        live_globals = getattr(func_data, "_globals_dict", None)
+        if live_globals is not None:
+            globals_dict = live_globals
+            globals_dict.setdefault("__builtins__", builtins)
+        else:
+            globals_dict = {}
 
-        # Add builtins first (so instance attributes can override them)
-        for name in dir(builtins):
-            if not name.startswith("_"):
-                globals_dict[name] = getattr(builtins, name)
+            # Add builtins first (so instance attributes can override them)
+            for name in dir(builtins):
+                if not name.startswith("_"):
+                    globals_dict[name] = getattr(builtins, name)
 
-        # Add instance attributes (includes tools, log, etc.)
-        for name in dir(instance):
-            if not name.startswith("_"):
-                globals_dict[name] = getattr(instance, name)
+            # Add instance attributes (includes tools, log, etc.)
+            for name in dir(instance):
+                if not name.startswith("_"):
+                    globals_dict[name] = getattr(instance, name)
 
-        # Add persistent variables to ensure global statements work correctly
-        if hasattr(instance, "persistent_vars"):
-            globals_dict.update(instance.persistent_vars)
+            # Add persistent variables to ensure global statements work correctly
+            if hasattr(instance, "persistent_vars"):
+                globals_dict.update(instance.persistent_vars)
 
         # Route print() inside agent-defined functions to the namespace log,
         # so output is captured and returned to the agent as STDOUT.
