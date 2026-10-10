@@ -1097,9 +1097,21 @@ class FactorioNamespace:
                 return False
             return True
 
+        elif isinstance(node, ast.With):
+            # LOCAL PATCH (FLE defect #44): give `with` a real branch (it used to fall
+            # through to the exec() fallback below, dropping every assignment made
+            # inside the block).
+            return self._execute_with(node, eval_dict)
+
         else:
+            # Fallback for nodes with no dedicated branch (`match`, `del`, …).
+            # LOCAL PATCH (FLE defect #44): persist any name the fallback created so
+            # the same "assignment silently lost across steps" class is closed here
+            # too, not just for `with`.
+            original_keys = set(eval_dict.keys())
             compiled = compile(ast.Module([node], type_ignores=[]), "file", "exec")
             exec(compiled, eval_dict)
+            self._persist_new_keys(eval_dict, original_keys)
             return True
 
     @staticmethod
@@ -1139,6 +1151,75 @@ class FactorioNamespace:
             if self._changed(old, value):
                 self.persistent_vars[name] = wrap_for_serialization(value)
                 setattr(self, name, value)
+
+    def _persist_new_keys(self, eval_dict, original_keys):
+        """Persist names that appeared in `eval_dict` while a node executed.
+
+        LOCAL PATCH (FLE defect #44): nodes without a dedicated branch used to fall
+        through to the raw `exec()` fallback, where assignments never reached the
+        persistence path and were silently dropped at the end of the step. Persisting
+        the diff is the generic safety net (same idea as the `ast.Assign` branch).
+        """
+        for name in set(eval_dict.keys()) - original_keys:
+            if name.startswith("_"):
+                continue
+            value = eval_dict[name]
+            self.persistent_vars[name] = wrap_for_serialization(value)
+            setattr(self, name, value)
+
+    def _execute_with(self, node, eval_dict):
+        """Execute an `ast.With` block, mirroring CPython's context-manager protocol.
+
+        LOCAL PATCH (FLE defect #44): previously `ast.With` had no branch here, so the
+        whole statement went through the `else: exec(...)` fallback: assignments inside
+        the block (and the `as` binding) were never persisted and vanished at the next
+        step. Running the body through `execute_body` restores normal semantics.
+        """
+        original_keys = set(eval_dict.keys())
+        managers = []
+        try:
+            for item in node.items:
+                cm = eval(
+                    compile(ast.Expression(item.context_expr), "file", "eval"), eval_dict
+                )
+                entered = cm.__enter__()
+                # Only track managers whose __enter__ succeeded (CPython contract).
+                managers.append(cm)
+                if item.optional_vars is not None:
+                    self._assign_target(item.optional_vars, entered, eval_dict)
+
+            result = self.execute_body(node.body, eval_dict, node)
+            if (
+                isinstance(result, tuple)
+                and len(result) == 2
+                and result[0] == "RETURN"
+            ):
+                # Unwind the context managers, then propagate the return value.
+                while managers:
+                    managers.pop().__exit__(None, None, None)
+                return result
+        except BaseException as exc:  # noqa: BLE001 — must unwind, then re-raise
+            exc_info = (type(exc), exc, exc.__traceback__)
+            suppressed = False
+            while managers:
+                cm = managers.pop()
+                try:
+                    if cm.__exit__(*exc_info):
+                        suppressed = True
+                        exc_info = (None, None, None)
+                        break
+                except BaseException as exit_exc:  # noqa: BLE001 — __exit__ replaced it
+                    exc_info = (type(exit_exc), exit_exc, exit_exc.__traceback__)
+            if not suppressed:
+                raise
+        else:
+            while managers:
+                managers.pop().__exit__(None, None, None)
+
+        # Cover the `as` binding (assigned via _assign_target, not ast.Assign) and any
+        # name a nested fallback node introduced.
+        self._persist_new_keys(eval_dict, original_keys)
+        return True
 
     def eval_with_timeout(self, expr):
         """
