@@ -1,5 +1,24 @@
 #!/bin/bash
 
+# =============================================================================
+# LOCAL PATCH (FLE defect #52): LEGACY PATH -- prefer `run_envs.py`.
+#
+# This shell generator is the older twin of `run_envs.py`. We do **not** use it
+# for runs (the Python generator is what `_agent_v2.py` / `_parallel_runs.py`
+# drive), and the two have drifted in several places (save volume path, save
+# validation, `--map-gen-seed` for every scenario, `version: '3'`, compose written
+# to cwd, ...). Use it only for debugging the container layout.
+#
+# The 9p `mod-list.json` fix has now been ported here (see the `mods-src` volume +
+# the `cp -a` staging in the command): binding a host directory straight onto
+# `/opt/factorio/mods` makes the engine's `writeModlist` fail on graceful shutdown
+# (9p does not support `copy_file`), which zeroes out `mod-list.json`
+# (docs/03 §6.1). Stage through the container's writable layer instead.
+#
+# NOTE: `MODS_VOLUME` (below) is built but never substituted into the compose file,
+# so `--attach_mods` is a no-op here -- another reason to use `run_envs.py`.
+# =============================================================================
+
 # Function to detect and set host architecture
 setup_platform() {
     ARCH=$(uname -m)
@@ -121,7 +140,7 @@ EOF
   factorio_${i}:
     image: factoriotools/factorio:2.0.73
     platform: \${DOCKER_PLATFORM:-linux/amd64}
-    command: /bin/sh -c 'rm -rf /opt/factorio/data/elevated-rails /opt/factorio/data/quality /opt/factorio/data/space-age && exec ${EMULATOR} /opt/factorio/bin/x64/factorio ${COMMAND}
+    command: /bin/sh -c 'rm -rf /opt/factorio/data/elevated-rails /opt/factorio/data/quality /opt/factorio/data/space-age && rm -rf /opt/factorio/mods && mkdir -p /opt/factorio/mods && cp -a /opt/factorio/mods-src/. /opt/factorio/mods/ && exec ${EMULATOR} /opt/factorio/bin/x64/factorio ${COMMAND}
       --port 34197 --server-settings /opt/factorio/config/server-settings.json --map-gen-settings
       /opt/factorio/config/map-gen-settings.json --map-settings /opt/factorio/config/map-settings.json
       --server-banlist /opt/factorio/config/server-banlist.json --rcon-port 27015
@@ -151,7 +170,7 @@ EOF
       target: /opt/factorio/script-output
       type: bind
     - source: ./mods
-      target: /opt/factorio/mods
+      target: /opt/factorio/mods-src
       type: bind
 ${SAVE_VOLUME}
 EOF
