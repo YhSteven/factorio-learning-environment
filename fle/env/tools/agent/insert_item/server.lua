@@ -5,6 +5,11 @@ local function is_module(item_name)
 end
 
 -- Function to get inventory fullness information
+-- LOCAL PATCH (#41/F9): also return whether the inventory is *actually* full.
+-- Callers used to print "Inventory is full (983/4800 items)" -- a
+-- self-contradiction (asserting fullness while the numbers show plenty of
+-- room). Also guard the capacity lookup: the old `inv[1].name` throws if the
+-- first slot is empty/nil.
 local function get_inventory_info(entity)
     if entity.get_inventory then
         -- Try common inventory types (Factorio 2.0: unified crafter_input for furnaces/assemblers)
@@ -21,13 +26,20 @@ local function get_inventory_info(entity)
                 end
             end
 
-            -- Calculate total capacity (slots * stack size)
-            local capacity = #inv * prototypes.item[inv[1].name or "iron-plate"].stack_size
+            -- Calculate total capacity (slots * stack size of the reference item)
+            local stack_size = 1
+            local ref = inv[1]
+            if ref and ref.valid_for_read and prototypes.item[ref.name] then
+                stack_size = prototypes.item[ref.name].stack_size
+            elseif prototypes.item["iron-plate"] then
+                stack_size = prototypes.item["iron-plate"].stack_size
+            end
+            local capacity = #inv * stack_size
 
-            return string.format("(%d/%d items)", item_count, capacity)
+            return string.format("(%d/%d items)", item_count, capacity), item_count >= capacity
         end
     end
-    return ""
+    return "", false
 end
 
 storage.actions.insert_item = function(player_index, insert_item, count, x, y, target_name)
@@ -267,17 +279,29 @@ storage.actions.insert_item = function(player_index, insert_item, count, x, y, t
         -- game.print("Successfully inserted " .. inserted .. " items.")
         return storage.utils.serialize_entity(closest_entity)
     else
-        local inventory_info = get_inventory_info(closest_entity)
+        -- LOCAL PATCH (#41/F9): the old message appended `inventory_info` twice
+        -- AND unconditionally claimed "Inventory is full" even when it was not
+        -- (e.g. "Inventory is full (983/4800 items)"). Only assert fullness
+        -- when the inventory really is full; otherwise report that the entity
+        -- refused the item, with the real count/capacity.
+        local inventory_info, is_full = get_inventory_info(closest_entity)
+        local reason
+        if inventory_info ~= "" and is_full then
+            reason = "Inventory is full " .. inventory_info
+        elseif inventory_info ~= "" then
+            reason = "The entity refused the item (inventory not full " .. inventory_info .. ")"
+        else
+            reason = "Entity might not accept this item or has no available space."
+        end
         local error_msg = string.format(
             "\"Failed to insert %s into %s (type %s) at position %s. " ..
-            "Attempted to insert %d items. %s %s\"",
+            "Attempted to insert %d items. %s\"",
             insert_item,
             closest_entity.name,
             closest_entity.type,
             serpent.line(closest_entity.position),
             insertable_count,
-            inventory_info ~= "" and "Inventory is full " .. inventory_info or "Entity might not accept this item or has no available space.",
-            inventory_info
+            reason
         )
         error(error_msg)
     end
