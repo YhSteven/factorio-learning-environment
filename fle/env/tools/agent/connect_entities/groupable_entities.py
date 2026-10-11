@@ -682,21 +682,40 @@ def agglomerate_groupable_entities(
         Prototype.BigElectricPole,
         Prototype.MediumElectricPole,
     ):
+        # LOCAL PATCH (FLE defect #53): group poles by electric *network* id, but
+        # never let `electrical_id is None` poles share one bucket. Keying the dict
+        # directly on `electrical_id` would collapse every `None`-id pole in the
+        # query -- however far apart -- into one bogus "group" (and since
+        # `PowerConnectionResolver.resolve` iterates `source.poles`, a later
+        # `connect_entities` on that group would wire *all* of them). Give any
+        # `None`-id pole its own bucket keyed on its position (unique per pole, and
+        # consistent with `ElectricityPole.__hash__`) so it becomes a group-of-one;
+        # networked poles still group by id.
+        # NOTE: real-game probes (2026-10-11, docs/02 §7.65) found that placed poles
+        # always carry a network id, so this is defensive hardening, not a live fix.
+        # ⚠️ UPSTREAM POLICY (user, 2026-10-11): keep this patch locally, but
+        # DO NOT PUSH IT UPSTREAM as-is -- it has no observable effect in-game.
+        # Re-consider only with a real-game repro of a pole whose
+        # `electrical_id is None` (then `None` poles would merge into one group).
         electricity_ids = {}
         for entity in connected_entities:
-            if entity.electrical_id in electricity_ids:
-                electricity_ids[entity.electrical_id].append(entity)
+            if entity.electrical_id is None:
+                key = ("unconnected", entity.position.x, entity.position.y)
             else:
-                electricity_ids[entity.electrical_id] = [entity]
+                key = entity.electrical_id
+            if key in electricity_ids:
+                electricity_ids[key].append(entity)
+            else:
+                electricity_ids[key] = [entity]
 
         return [
             _construct_group(
-                id=id,
+                id=entities[0].electrical_id,
                 entities=entities,
                 prototype=prototype,
                 position=entities[0].position,
             )
-            for id, entities in electricity_ids.items()
+            for entities in electricity_ids.values()
         ]
     elif prototype in (Prototype.Pipe, Prototype.UndergroundPipe):
         fluidbox_ids = {}

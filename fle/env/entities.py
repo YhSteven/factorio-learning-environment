@@ -1054,7 +1054,19 @@ class Reactor(StaticEntity):
 
 
 class EntityGroup(BaseModel):
-    id: int
+    # LOCAL PATCH (FLE defect #53): `id` is the group's *system* id -- the electric
+    # network id for `ElectricityGroup`, the fluidbox/segment id for `PipeGroup`.
+    # It was a *required* `int`, so `ElectricityGroup(id=None)` raised a pydantic
+    # ValidationError. `None` is the right spelling for "not attached to any
+    # system", mirroring `ElectricityPole.electrical_id`.
+    # NOTE: real-game probes (2026-10-11, docs/02 §7.65) show that placed poles and
+    # pipes *always* carry a network/segment id, so this widening currently only
+    # matters for synthetic entities. Runtime values for connected groups are
+    # unchanged (they already pass a real int).
+    # ⚠️ UPSTREAM POLICY (user, 2026-10-11): keep this patch locally, but
+    # DO NOT PUSH IT UPSTREAM as-is -- no observable effect in-game.
+    # Re-consider only with a real-game repro of a group with a `None` system id.
+    id: Optional[int] = None
     status: EntityStatus = EntityStatus.NORMAL
     position: Position
     name: str = "entity-group"
