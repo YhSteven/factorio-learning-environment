@@ -905,7 +905,16 @@ class ElectricityPole(Entity, Electric):
     _width: float = 1
 
     def __hash__(self):
-        return self.electrical_id
+        # LOCAL PATCH (FLE defect #47): `electrical_id` is None for any pole that is
+        # not connected to a network, and `hash()` must return an *int* -- the old
+        # `return self.electrical_id` raised
+        # "TypeError: __hash__ method should return an integer" for every unconnected
+        # pole. `_construct_group` hashes each pole (`poles = list(set(entities))`), so
+        # a single unplugged pole used to blow up the whole electricity aggregation
+        # (and with it `get_entities`). Mirror `TransportBelt.__hash__` and key on the
+        # position: unique per pole, and consistent with the field-based `__eq__`
+        # (equal poles necessarily share a position).
+        return hash((self.position.x, self.position.y))
 
 
 class Furnace(Entity, BurnerType):
@@ -1091,7 +1100,10 @@ class ElectricityGroup(EntityGroup):
         return f"\tElectricityGroup(id={self.id}, poles={pole_summary}, voltage={max_flow_rate})"
 
     def __hash__(self):
-        return self.name + str(self.id)
+        # LOCAL PATCH (FLE defect #47): used to `return self.name + str(self.id)`, i.e.
+        # a *string* -- so `hash(group)` (and putting a group into a `set`/`dict`)
+        # raised "TypeError: __hash__ method should return an integer".
+        return hash((self.name, self.id))
 
     def __str__(self):
         return self.__repr__()
