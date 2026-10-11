@@ -32,6 +32,22 @@ class LaunchRocket(Tool):
             # path was never exercised, so it stayed latent). Pass exactly the
             # two coordinates the Lua action expects.
             response, _ = self.execute(position.x, position.y)
+            # LOCAL PATCH (#35/F3): server.lua returns `false` when there is no
+            # rocket silo at the position, or the rocket is not ready to launch.
+            # The client used to discard that verdict and unconditionally return
+            # the silo, so a refused launch still looked successful (RCON showed
+            # rockets_launched=0 / no space-science output). Surface the verdict
+            # as an error instead -- a silent false success is worse than a
+            # clear failure.
+            if isinstance(response, str):
+                raise Exception(
+                    f"Cannot launch rocket. {self.get_error_message(response)}"
+                )
+            if not response:
+                raise Exception(
+                    f"Cannot launch rocket. No rocket silo at "
+                    f"({position.x}, {position.y}) with a rocket ready to launch."
+                )
             return cast(
                 Prototype.RocketSilo, self.get_entity(Prototype.RocketSilo, position)
             )
