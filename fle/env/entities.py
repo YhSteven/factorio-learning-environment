@@ -898,7 +898,14 @@ class OffshorePump(FluidHandler):
 
 
 class ElectricityPole(Entity, Electric):
-    """A power pole for electricity distribution."""
+    """A power pole for electricity distribution.
+
+    LOCAL PATCH (FLE defect #49): this base class used to be shared by
+    `small-`/`medium-`/`big-electric-pole` **and** `substation`, so
+    `Prototype.BigElectricPole.WIDTH/HEIGHT` reported the 1x1 default while the
+    engine collision/tile box is 2x2 (and `substation` is 2x2 as well). Each
+    concrete prototype now has its own subclass with the real tile size below.
+    """
 
     flow_rate: float
     _height: float = 1
@@ -915,6 +922,34 @@ class ElectricityPole(Entity, Electric):
         # position: unique per pole, and consistent with the field-based `__eq__`
         # (equal poles necessarily share a position).
         return hash((self.position.x, self.position.y))
+
+
+class SmallElectricPole(ElectricityPole):
+    """`small-electric-pole` -- engine tile size 1x1."""
+
+    _height: float = 1
+    _width: float = 1
+
+
+class MediumElectricPole(ElectricityPole):
+    """`medium-electric-pole` -- engine tile size 1x1."""
+
+    _height: float = 1
+    _width: float = 1
+
+
+class BigElectricPole(ElectricityPole):
+    """`big-electric-pole` -- engine tile size 2x2 (was reported as 1x1, #49)."""
+
+    _height: float = 2
+    _width: float = 2
+
+
+class Substation(ElectricityPole):
+    """`substation` -- engine tile size 2x2 (was reported as 1x1, #49 同族)."""
+
+    _height: float = 2
+    _width: float = 2
 
 
 class Furnace(Entity, BurnerType):

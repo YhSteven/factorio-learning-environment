@@ -151,9 +151,11 @@ class Prototype(enum.Enum, metaclass=PrototypeMetaclass):
     IronGearWheel = "iron-gear-wheel", ent.Entity
     StorageTank = "storage-tank", ent.StorageTank
 
-    SmallElectricPole = "small-electric-pole", ent.ElectricityPole
-    MediumElectricPole = "medium-electric-pole", ent.ElectricityPole
-    BigElectricPole = "big-electric-pole", ent.ElectricityPole
+    # LOCAL PATCH (FLE defect #49): per-prototype pole classes so `Prototype.X.WIDTH`
+    # reports the engine's real tile size (big pole / substation are 2x2, not 1x1).
+    SmallElectricPole = "small-electric-pole", ent.SmallElectricPole
+    MediumElectricPole = "medium-electric-pole", ent.MediumElectricPole
+    BigElectricPole = "big-electric-pole", ent.BigElectricPole
 
     Coal = "coal", None
     Wood = "wood", None
@@ -256,7 +258,7 @@ class Prototype(enum.Enum, metaclass=PrototypeMetaclass):
     EfficiencyModule3 = "efficiency-module-3", None
 
     # Power
-    Substation = "substation", ent.ElectricityPole
+    Substation = "substation", ent.Substation  # LOCAL PATCH #49: 2x2（原共用 ElectricityPole
     SteamTurbine = "steam-turbine", ent.Generator
 
     # Circuit Network
