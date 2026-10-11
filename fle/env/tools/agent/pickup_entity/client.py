@@ -60,15 +60,35 @@ class PickupEntity(Tool):
             x, y = position.x, position.y
             response, elapsed = self.execute(self.player_index, x, y, name)
         elif isinstance(entity, ent.UndergroundBelt):
-            x, y = entity.position.x, entity.position.y
-            response, elapsed = self.execute(self.player_index, x, y, name)
-            if response != 1 and response != {}:
-                raise Exception(f"Could not pickup: {self.get_error_message(response)}")
+            # LOCAL PATCH (#40/F7): an underground belt is a single 1x2 entity.
+            # Its `.output_position` is the cell it *feeds* (the paired exit, or
+            # centre+offset when it has no neighbour) -- it does NOT necessarily
+            # hold another underground-belt. The old code *required* both probes
+            # to succeed, so picking up a lone belt raised
+            #   "Couldn't find underground-belt at (-19.5, 21.5)"
+            # AFTER the belt at `.position` (-19.5, 22.5) had already been
+            # removed -- a false failure (the tool reported failure while the
+            # item was already back in the inventory). Probe both cells but only
+            # fail when NEITHER removes anything.
+            candidates = [(entity.position.x, entity.position.y)]
+            output_position = getattr(entity, "output_position", None)
+            if output_position is not None and (
+                output_position.x,
+                output_position.y,
+            ) != candidates[0]:
+                candidates.append((output_position.x, output_position.y))
 
-            x, y = entity.output_position.x, entity.output_position.y
-            response, elapsed = self.execute(self.player_index, x, y, name)
-            if response != 1 and response != {}:
-                raise Exception(f"Could not pickup: {self.get_error_message(response)}")
+            picked = False
+            last_error = None
+            for px, py in candidates:
+                probe, elapsed = self.execute(self.player_index, px, py, name)
+                if probe == 1 or probe == {}:
+                    picked = True
+                elif last_error is None:
+                    last_error = self.get_error_message(probe)
+            if not picked:
+                raise Exception(f"Could not pickup: {last_error}")
+            response = {}
 
         elif isinstance(entity, ent.Entity):
             x, y = entity.position.x, entity.position.y
