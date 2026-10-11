@@ -1,7 +1,7 @@
 from typing import Optional, Dict
 import math
 
-from fle.env import BoundingBox, Position, BeltGroup, PipeGroup, ElectricityGroup, Layer
+from fle.env import BoundingBox, Position, BeltGroup, PipeGroup, ElectricityGroup, WallGroup, Layer
 from fle.commons.models.rendered_image import RenderedImage
 from fle.env.tools.admin.render_simple.renderer import Renderer
 from fle.env.tools.agent.get_entities.client import GetEntities
@@ -62,9 +62,16 @@ class RenderSimple(Tool):
         if style:
             custom_style.update(style)
 
-        # Create new renderer with the custom style if any
-        if custom_style:
-            self.renderer = Renderer(custom_style)
+        # LOCAL PATCH (#28): use a *local* renderer for the custom style instead of
+        # assigning to self.renderer. This tool is a per-instance singleton
+        # (lua_manager builds it once per game), and the old
+        # `self.renderer = Renderer(custom_style)` permanently replaced the
+        # renderer. So a one-off `view_map(style={"margin":44})` leaked into EVERY
+        # later render: each step_*.png snapshot jumped 840 -> 908 mid-game
+        # (margin 10 -> 44) and every consumer of _render_simple inherited the
+        # custom style. Build the custom renderer locally; the default path reuses
+        # self.renderer untouched.
+        renderer = Renderer(custom_style) if custom_style else self.renderer
 
         # Apply zoom by adjusting max_tiles (number of tiles displayed)
         if zoom != 1.0:
@@ -80,7 +87,7 @@ class RenderSimple(Tool):
 
         # Cap max_tiles to ensure the total image size doesn't exceed maximum resolution
         # Calculate estimated pixels per tile including margins
-        estimated_pixels_per_tile = self.renderer.config.style["cell_size"]
+        estimated_pixels_per_tile = renderer.config.style["cell_size"]
 
         # Calculate maximum tiles in each dimension based on MAX_IMAGE_RESOLUTION
         max_tiles_per_dimension = MAX_IMAGE_RESOLUTION // estimated_pixels_per_tile
@@ -161,6 +168,13 @@ class RenderSimple(Tool):
                 base_entities.extend(entity.pipes)
             elif isinstance(entity, ElectricityGroup):
                 base_entities.extend(entity.poles)
+            # LOCAL PATCH (#37/F6): WallGroup was not expanded, so any wall in
+            # view crashed the renderer with KeyError: 'wall-group' (a grouped
+            # wall reached the sprite lookup). Expanding it into its member
+            # walls fixes "go near a wall -> observation goes blind" (the
+            # sandbox save has 980 walls). Mirrors render/utils.flatten_entities.
+            elif isinstance(entity, WallGroup):
+                base_entities.extend(entity.entities)
             else:
                 base_entities.append(entity)
 
@@ -174,7 +188,7 @@ class RenderSimple(Tool):
         )  # Extract electricity networks
 
         # Render the entities with all additional elements
-        img = self.renderer.render_entities(
+        img = renderer.render_entities(
             base_entities,
             center_pos=position,
             bounding_box=bounding_box,
