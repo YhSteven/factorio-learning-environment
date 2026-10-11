@@ -554,7 +554,8 @@ class FactorioInstance:
             f"/sc rcon.print(dump(storage.get_alerts({seconds})))"
         )
         # print(lua_response)
-        alert_dict, duration = _lua2python("alerts", lua_response, start=start)
+        parse_result = _lua2python("alerts", lua_response, start=start)
+        alert_dict, duration = parse_result
         if isinstance(alert_dict, dict):
             alerts = list(alert_dict.values())
             alert_strings = []
@@ -568,6 +569,14 @@ class FactorioInstance:
 
             return alert_strings
         else:
+            # LOCAL PATCH (FLE defect #51): a failed parse used to be indistinguishable
+            # from "the game reported no alerts", so real alerts silently vanished from
+            # the agent's observations. Stay non-fatal (alerts are best-effort) but say so.
+            if getattr(parse_result, "error", None):
+                print(
+                    "WARNING: could not parse alerts from the game "
+                    f"({parse_result.error}) -- reporting none"
+                )
             return []
 
     def _generate_chunks(

@@ -3,7 +3,7 @@ import re
 from glob import glob
 from itertools import chain
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 from typing_extensions import deprecated
 
 from timeit import default_timer as timer
@@ -155,6 +155,34 @@ class LuaConversionError(Exception):
     pass
 
 
+class LuaParseResult(tuple):
+    """The `(value, elapsed)` pair returned by `_lua2python`, plus a `.error` reason.
+
+    LOCAL PATCH (FLE defect #51): a *parse failure* and an *empty response* both used
+    to come back as a bare `(None, elapsed)`, so callers could not tell "there was no
+    data" from "the Lua parser blew up" and had to guess (e.g. `get_warnings` simply
+    returned "no alerts" when parsing failed). The tuple shape is deliberately kept --
+    unpacking and `is None` checks are unchanged -- and `.error` now carries the reason
+    for the parse-failure case (``None`` for an empty response).
+    """
+
+    error: Optional[str] = None
+    empty: bool = True
+
+    @classmethod
+    def ok(cls, value, elapsed):
+        result = cls((value, elapsed))
+        result.empty = False
+        return result
+
+    @classmethod
+    def failed(cls, reason, elapsed):
+        result = cls((None, elapsed))
+        result.error = reason
+        result.empty = False
+        return result
+
+
 def _check_output_for_errors(command, response, output):
     """Check captured stdout for known Lua parsing errors"""
     ERRORS = {
@@ -172,12 +200,26 @@ def _check_output_for_errors(command, response, output):
             )
 
 
-def _lua2python(command, response, *parameters, trace=False, start=0):
+def _lua2python(command, response, *parameters, trace=False, start=0, raise_on_error=False):
+    """Decode a Lua response into Python.
+
+    Returns a `LuaParseResult` -- a `(value, elapsed)` tuple (unpack/write-back
+    compatible) that also carries `.error` / `.empty`, see `LuaParseResult`.
+
+    LOCAL PATCH (FLE defect #51):
+      * a parse failure is no longer indistinguishable from an empty response --
+        `.error` carries the reason and `.empty` is False;
+      * pass `raise_on_error=True` to get a `LuaConversionError` instead of a
+        `None` value (for callers that must not silently continue).
+    Default behaviour (return `(None, elapsed)`, no exception) is unchanged, because
+    `controller.execute()` deliberately relies on `parsed is None` to fall back to
+    scraping the raw RCON dump for the error string.
+    """
     stdout = io.StringIO()
 
     with contextlib.redirect_stdout(stdout):
         if not response:
-            return None, (timer() - start)
+            return LuaParseResult((None, (timer() - start)))
 
         try:
             # Handle the case where response is a complete table
@@ -193,12 +235,19 @@ def _lua2python(command, response, *parameters, trace=False, start=0):
             if isinstance(output, dict) and "b" in output:
                 output["b"] = _remove_numerical_keys(output["b"])
 
-            return output, (timer() - start)
+            return LuaParseResult.ok(output, (timer() - start))
 
         except Exception as e:
+            reason = f"{type(e).__name__}: {e}"
+            if raise_on_error:
+                excerpt = response if len(response) <= 300 else response[:300] + "…"
+                raise LuaConversionError(
+                    f"Could not parse Lua response for command '{command}': {reason}\n"
+                    f"response: {excerpt}"
+                ) from e
             if trace:
-                print(f"Parsing error: {str(e)}")
-            return None, (timer() - start)
+                print(f"Parsing error: {reason}")
+            return LuaParseResult.failed(reason, (timer() - start))
 
 
 @deprecated("Doesn't handle nested structures that well")
