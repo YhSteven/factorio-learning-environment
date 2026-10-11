@@ -40,13 +40,14 @@ class LaunchRocket(Tool):
             # as an error instead -- a silent false success is worse than a
             # clear failure.
             if isinstance(response, str):
-                raise Exception(
-                    f"Cannot launch rocket. {self.get_error_message(response)}"
-                )
+                # NOTE: no "Cannot launch rocket." prefix here -- the outer
+                # except below already adds it, otherwise the message would be
+                # doubled (prefix repeated twice in the final text).
+                raise Exception(self.get_error_message(response))
             if not response:
                 raise Exception(
-                    f"Cannot launch rocket. No rocket silo at "
-                    f"({position.x}, {position.y}) with a rocket ready to launch."
+                    f"No rocket silo at ({position.x}, {position.y}) with a "
+                    f"rocket ready to launch."
                 )
             return cast(
                 Prototype.RocketSilo, self.get_entity(Prototype.RocketSilo, position)

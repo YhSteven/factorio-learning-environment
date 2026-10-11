@@ -275,57 +275,44 @@ class ConnectEntities(Tool):
                 # Check if this is the specific "Failed to find a path" error for existing connections
                 error_str = str(e)
                 if "Failed to find a path" in error_str:
-                    # Check for belt connections
-                    if any(
-                        ct
-                        in (
-                            Prototype.TransportBelt,
-                            Prototype.FastTransportBelt,
-                            Prototype.ExpressTransportBelt,
-                        )
-                        for ct in connection_types
-                    ):
+                    # "Failed to find a path" usually means the two ends are
+                    # ALREADY connected (an existing group sits at the target).
+                    #
+                    # LOCAL PATCH (#34/F2): the old code returned that EntityGroup
+                    # unconditionally -- but a dry run's caller expects the dict
+                    # shape {"number_of_entities_required": ...}, so
+                    # `connection["..."]` raised
+                    # "TypeError: 'BeltGroup' object is not subscriptable".
+                    # For a dry run report "0 additional entities needed" instead
+                    # (with the real inventory count, so the caller's
+                    # `number_of_entities_available` stays meaningful).
+                    group_types = (
+                        Prototype.TransportBelt,
+                        Prototype.FastTransportBelt,
+                        Prototype.ExpressTransportBelt,
+                        Prototype.SmallElectricPole,
+                        Prototype.MediumElectricPole,
+                        Prototype.BigElectricPole,
+                        Prototype.Pipe,
+                        Prototype.UndergroundPipe,
+                    )
+                    if any(ct in group_types for ct in connection_types):
                         existing_group = self._get_existing_connection_group(
                             target_pos, list(connection_types)[0], target
                         )
-                        # LOCAL PATCH (#34/F2): never return an EntityGroup for a
-                        # dry run -- the caller (__call__) expects the dict shape
-                        # {"number_of_entities_required": ...}. Returning a group
-                        # made `connection["..."]` raise
-                        # "TypeError: 'BeltGroup' object is not subscriptable".
-                        # A dry run on a path we could not find is a genuine
-                        # failure, so let it fall through to the error below.
-                        if existing_group and not dry_run:
-                            return existing_group
-                    # Check for pole connections
-                    elif any(
-                        ct
-                        in (
-                            Prototype.SmallElectricPole,
-                            Prototype.MediumElectricPole,
-                            Prototype.BigElectricPole,
-                        )
-                        for ct in connection_types
-                    ):
-                        existing_group = self._get_existing_connection_group(
-                            target_pos, list(connection_types)[0], target
-                        )
-                        # LOCAL PATCH (#34/F2): see belt branch above -- no group
-                        # return on a dry run.
-                        if existing_group and not dry_run:
-                            return existing_group
-                    # Check for pipe connections
-                    elif any(
-                        ct in (Prototype.Pipe, Prototype.UndergroundPipe)
-                        for ct in connection_types
-                    ):
-                        existing_group = self._get_existing_connection_group(
-                            target_pos, list(connection_types)[0], target
-                        )
-                        # LOCAL PATCH (#34/F2): see belt branch above -- no group
-                        # return on a dry run.
-                        if existing_group and not dry_run:
-                            return existing_group
+                        if existing_group:
+                            if not dry_run:
+                                return existing_group
+                            prototype_needed = self._get_connection_info(
+                                connection_types
+                            )["last_connection_prototype"]
+                            available = self.inspect_inventory().get(
+                                prototype_needed, 0
+                            )
+                            return {
+                                "number_of_entities_required": 0,
+                                "number_of_entities_available": available,
+                            }
 
                 last_exception = e
                 pass
