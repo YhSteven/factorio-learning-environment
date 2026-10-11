@@ -16,15 +16,16 @@ storage.actions.get_entities = function(player_index, radius, entity_names_json,
         {position.x + radius, position.y + radius}
     }
 
-    local filter = {}
-    if entity_names and #entity_names > 0 then
-        filter = {name = entity_names}
-    end
-
+    -- LOCAL PATCH (FLE defect #54): `find_entities_filtered` has NO `filter`
+    -- parameter. The old code built `filter = {name = entity_names}` and passed
+    -- `filter = filter`, which the engine SILENTLY IGNORES -- so every query
+    -- (even "poles only") materialised and serialized *every* entity in the area.
+    -- On a 321k-entity save that was 28,731 entities per call => 772.9 s and ~670 MB,
+    -- OOM-killing the 1 GiB container. The name filter must be passed directly.
     local entities
 
-    if #entity_names > 0 then
-        entities = player.surface.find_entities_filtered{area = area, force = player.force, filter=filter}
+    if entity_names and #entity_names > 0 then
+        entities = player.surface.find_entities_filtered{area = area, force = player.force, name = entity_names}
     else
         entities = player.surface.find_entities_filtered{area = area, force = player.force}
     end
