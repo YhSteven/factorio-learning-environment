@@ -2,7 +2,7 @@ from typing import Dict, Any, Set, Optional
 from PIL import ImageDraw, ImageFont, Image
 import math
 
-from fle.env.entities import EntityStatus
+from fle.env.entities import EntityStatus, Layer
 from fle.env.tools.admin.render_simple.utils.render_config import RenderConfig
 from fle.env.tools.admin.render_simple.utils.colour_manager import ColourManager
 from fle.env.tools.admin.render_simple.utils.entity_categoriser import EntityCategoriser
@@ -68,6 +68,7 @@ class LegendRenderer:
         natural_elements_present: Optional[Set[str]] = None,
         statuses_present: Optional[Set[EntityStatus]] = None,
         electricity_networks: Optional[Dict[int, tuple]] = None,
+        layers: Layer = Layer.ALL,
     ) -> Dict[str, Any]:
         """
         Calculate the dimensions of the legend without actually drawing it
@@ -106,29 +107,36 @@ class LegendRenderer:
         category_spacing = item_spacing * 2
 
         # Get all entities and count them
+        # LOCAL PATCH (#29): the ENTITIES section must respect the `layers` mask.
+        # `color_manager` counts every entity in view regardless of layers, so a
+        # `layers="water,grid"` render still listed "Stone Furnace (3)" while the
+        # map drew no entities -> a self-contradictory observation for a vision
+        # agent (docs/06 #29).
         entity_counts = {}
         entity_categories = {}
 
-        # Get entities by category from color manager and include shapes
-        entities_by_category, entity_shapes = (
-            self.color_manager.get_entities_by_category()
-        )
-
-        # Flatten all entities into a single list
         all_entities = []
-        for category, entities in entities_by_category.items():
-            for entity_data in entities:
-                entity_name = entity_data[0]
-                count = entity_data[1]
-                if entity_name not in entity_counts:
-                    entity_counts[entity_name] = count
-                    entity_categories[entity_name] = category
-                    all_entities.append((entity_name, count))
-                else:
-                    entity_counts[entity_name] += count
+        entity_shapes = {}
+        if Layer.ENTITIES in layers:
+            # Get entities by category from color manager and include shapes
+            entities_by_category, entity_shapes = (
+                self.color_manager.get_entities_by_category()
+            )
 
-        # Sort entities by count (descending)
-        all_entities.sort(key=lambda x: (-x[1], x[0]))
+            # Flatten all entities into a single list
+            for category, entities in entities_by_category.items():
+                for entity_data in entities:
+                    entity_name = entity_data[0]
+                    count = entity_data[1]
+                    if entity_name not in entity_counts:
+                        entity_counts[entity_name] = count
+                        entity_categories[entity_name] = category
+                        all_entities.append((entity_name, count))
+                    else:
+                        entity_counts[entity_name] += count
+
+            # Sort entities by count (descending)
+            all_entities.sort(key=lambda x: (-x[1], x[0]))
 
         # Calculate legend dimensions
         total_items = len(all_entities)
@@ -170,7 +178,13 @@ class LegendRenderer:
 
         # Get status indicators to include (only those that are present)
         status_items = []
-        if self.config.style["status_indicator_enabled"] and statuses_present:
+        # #29: status indicators describe entities -> only meaningful when the
+        # ENTITIES layer is actually drawn.
+        if (
+            self.config.style["status_indicator_enabled"]
+            and statuses_present
+            and (Layer.ENTITIES in layers)
+        ):
             status_map = {
                 EntityStatus.WORKING: "Working",
                 EntityStatus.NO_POWER: "No Power",
@@ -201,8 +215,14 @@ class LegendRenderer:
                 )
 
         # Add player marker to the legend
+        # #29: the character/origin markers are only drawn when PLAYER / ORIGIN
+        # layers are requested -- the legend must match, or it advertises markers
+        # that are not on the map.
         player_marker = {"name": "Character Position", "is_player": True}
-        player_items = [player_marker]
+        if (Layer.PLAYER in layers) or (Layer.ORIGIN in layers):
+            player_items = [player_marker]
+        else:
+            player_items = []
 
         # If we have status items or electricity items, add another category for each
         if status_items:
@@ -294,11 +314,15 @@ class LegendRenderer:
                 + len(natural_types) * (item_height + item_spacing)
             )
 
-        entities_height = (
-            item_height
-            + category_spacing
-            + len(all_entities) * (item_height + item_spacing)
-        )
+        # #29: no ENTITIES section (and no height reserved for it) when the
+        # ENTITIES layer is off.
+        entities_height = 0
+        if Layer.ENTITIES in layers:
+            entities_height = (
+                item_height
+                + category_spacing
+                + len(all_entities) * (item_height + item_spacing)
+            )
 
         # Add height for status indicators
         status_height = 0
@@ -327,7 +351,7 @@ class LegendRenderer:
 
         # Add height for origin marker if enabled
         origin_height = 0
-        if self.config.style["origin_marker_enabled"]:
+        if self.config.style["origin_marker_enabled"] and (Layer.ORIGIN in layers):
             origin_height = item_height + item_spacing
 
         total_height = (
@@ -379,6 +403,7 @@ class LegendRenderer:
         natural_elements_present: Optional[Set[str]] = None,
         statuses_present: Optional[Set[EntityStatus]] = None,
         electricity_networks: Optional[Dict[int, tuple]] = None,
+        layers: Layer = Layer.ALL,
     ) -> None:
         """Draw a combined legend showing entity types with their actual shapes and colors"""
         if not self.config.style["legend_enabled"]:
@@ -398,6 +423,7 @@ class LegendRenderer:
             natural_elements_present,
             statuses_present,
             electricity_networks,
+            layers,
         )
         legend_width = dimensions["width"]
         legend_height = dimensions["height"]
@@ -498,21 +524,23 @@ class LegendRenderer:
             sections.append(natural_section)
 
         # Add all entities in a single section
-        entities_section = {"title": "ENTITIES", "items": []}
+        # #29: skip the ENTITIES section entirely when the layer is not drawn.
+        if Layer.ENTITIES in layers:
+            entities_section = {"title": "ENTITIES", "items": []}
 
-        for entity_name, count in all_entities:
-            display_name = entity_name.replace("-", " ").title()
-            display_text = f"{display_name} ({count})"
-            color = self.color_manager.entity_colors[entity_name]
+            for entity_name, count in all_entities:
+                display_name = entity_name.replace("-", " ").title()
+                display_text = f"{display_name} ({count})"
+                color = self.color_manager.entity_colors[entity_name]
 
-            # Get the correct shape for this entity
-            shape_type = entity_shapes.get(entity_name, "square")
+                # Get the correct shape for this entity
+                shape_type = entity_shapes.get(entity_name, "square")
 
-            entities_section["items"].append(
-                {"name": display_text, "color": color, "shape": shape_type}
-            )
+                entities_section["items"].append(
+                    {"name": display_text, "color": color, "shape": shape_type}
+                )
 
-        sections.append(entities_section)
+            sections.append(entities_section)
 
         # Add status indicators section if enabled
         if status_items:
@@ -565,7 +593,8 @@ class LegendRenderer:
             sections.append(player_section)
 
         # Add origin marker if enabled
-        if self.config.style["origin_marker_enabled"]:
+        # #29: only when the ORIGIN layer is drawn.
+        if self.config.style["origin_marker_enabled"] and (Layer.ORIGIN in layers):
             # Check if we already have a MARKERS section
             markers_section = next(
                 (s for s in sections if s["title"] == "MARKERS"), None

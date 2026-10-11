@@ -187,13 +187,24 @@ class Renderer:
 
         # Calculate legend dimensions
         legend_dimensions = None
-        if self.config.style["legend_enabled"] and (
+        # LOCAL PATCH (#29/#30): decide "has content" with the SAME layer mask the
+        # legend drawing uses, otherwise the panel content and the reserved width
+        # disagree. `color_manager.entity_colors` counts every entity in view
+        # regardless of layers, so it alone must not be treated as content.
+        legend_has_entities = Layer.ENTITIES in layers and bool(
             self.color_manager.entity_colors
+        )
+        legend_has_markers = (Layer.PLAYER in layers) or (Layer.ORIGIN in layers)
+        legend_has_content = bool(
+            (Layer.ENTITIES in layers)          # ENTITIES title is drawn whenever on
+            or legend_has_entities
             or resources_present
             or natural_elements_present
-            or statuses_present
+            or (Layer.ENTITIES in layers and statuses_present)
             or network_colors
-        ):
+            or legend_has_markers
+        )
+        if self.config.style["legend_enabled"] and legend_has_content:
             # Create a temporary image to calculate legend dimensions properly
             # Use constant base cell size for legend calculations to ensure consistent legend sizing regardless of zoom
             BASE_CELL_SIZE = 20  # Base cell size - this ensures legend remains readable at all zoom levels
@@ -214,6 +225,7 @@ class Renderer:
                 natural_elements_present,
                 statuses_present,
                 network_colors,
+                layers,
             )
 
         # Calculate final image dimensions
@@ -272,16 +284,23 @@ class Renderer:
 
         # Draw the legend with resources, natural elements, statuses, and electricity networks
         # Use the legend_font for consistent readability regardless of zoom
-        self.legend_renderer.draw_combined_legend(
-            draw,
-            img_width,
-            img_height,
-            legend_font,
-            resources_present,
-            natural_elements_present,
-            statuses_present,
-            network_colors,
-        )
+        # LOCAL PATCH (#30): only draw the panel when there is actually content.
+        # `legend_dimensions is None` means no width was reserved for a legend,
+        # so drawing it anyway placed the panel ON the map
+        # (legend_x = img_width - legend_width - padding => top-right corner of
+        # the map was obscured; view_step_045_1.png lost ~7x5.5 tiles).
+        if legend_dimensions is not None:
+            self.legend_renderer.draw_combined_legend(
+                draw,
+                img_width,
+                img_height,
+                legend_font,
+                resources_present,
+                natural_elements_present,
+                statuses_present,
+                network_colors,
+                layers,
+            )
 
         return img
 
