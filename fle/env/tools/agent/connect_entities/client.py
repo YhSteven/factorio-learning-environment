@@ -288,7 +288,14 @@ class ConnectEntities(Tool):
                         existing_group = self._get_existing_connection_group(
                             target_pos, list(connection_types)[0], target
                         )
-                        if existing_group:
+                        # LOCAL PATCH (#34/F2): never return an EntityGroup for a
+                        # dry run -- the caller (__call__) expects the dict shape
+                        # {"number_of_entities_required": ...}. Returning a group
+                        # made `connection["..."]` raise
+                        # "TypeError: 'BeltGroup' object is not subscriptable".
+                        # A dry run on a path we could not find is a genuine
+                        # failure, so let it fall through to the error below.
+                        if existing_group and not dry_run:
                             return existing_group
                     # Check for pole connections
                     elif any(
@@ -303,7 +310,9 @@ class ConnectEntities(Tool):
                         existing_group = self._get_existing_connection_group(
                             target_pos, list(connection_types)[0], target
                         )
-                        if existing_group:
+                        # LOCAL PATCH (#34/F2): see belt branch above -- no group
+                        # return on a dry run.
+                        if existing_group and not dry_run:
                             return existing_group
                     # Check for pipe connections
                     elif any(
@@ -313,7 +322,9 @@ class ConnectEntities(Tool):
                         existing_group = self._get_existing_connection_group(
                             target_pos, list(connection_types)[0], target
                         )
-                        if existing_group:
+                        # LOCAL PATCH (#34/F2): see belt branch above -- no group
+                        # return on a dry run.
+                        if existing_group and not dry_run:
                             return existing_group
 
                 last_exception = e
