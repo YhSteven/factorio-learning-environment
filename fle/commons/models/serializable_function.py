@@ -12,7 +12,17 @@ class SerializableFunction:
         self.code_bytes = marshal.dumps(func.__code__)
         self.name = func.__name__
         self.defaults = func.__defaults__
-        self.closure = None
+        # LOCAL PATCH (FLE defect #45): keep the *real* closure. It used to be hardcoded
+        # to `None`, so reconstructing any function that references a free variable --
+        # a returned inner function (`closure_returned`) or a function wrapped by a
+        # decorator (`decorator`) -- raised
+        # `TypeError: arg 5 (closure) must be tuple`, i.e. the whole step failed.
+        # Keeping the original cells (not copies) preserves `nonlocal` sharing across
+        # calls. ⚠️ Cells are neither marshallable nor picklable, so such a function is
+        # filtered out of the pickled game state by `is_serializable` (it raises
+        # TypeError, which that guard swallows); it stays fully usable in-process,
+        # which is where agent code actually runs.
+        self.closure = func.__closure__
         self.docstring = func.__doc__
 
         # Store signature information including annotations
