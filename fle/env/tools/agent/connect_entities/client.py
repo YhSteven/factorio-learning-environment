@@ -239,6 +239,16 @@ class ConnectEntities(Tool):
         # Get resolver for this connection type
         resolver = self.resolvers[self._get_connection_type(list(connection_types)[0])]
 
+        # LOCAL PATCH (#55/G10, 2026-10-11): 流体设备的连接几何在 connection_points 上，
+        # 裸坐标落在设备脚印内时既铺不了管也接不上端口 —— 旧代码把它当普通 waypoint
+        # 处理，报错只有含糊的路径失败（P4/P5 实测烧掉约 8 步，docs/08 §16.5 W1/G10）。
+        # 这里提前改报「请传实体对象」，对齐皮带-箱子那条的高质量报错（G1）。
+        # 合法用法不受影响：坐标命中 connection_points 时 _check_for_fluidhandlers
+        # 已把它解析成实体（不再是 Position）；管/带中途坐标不与流体设备脚印相交。
+        if resolver is self.resolvers[ConnectionType.FLUID]:
+            self._raise_if_position_on_fluid_device(source, "source")
+            self._raise_if_position_on_fluid_device(target, "target")
+
         # Resolve source and target positions
         prioritised_list_of_position_pairs = resolver.resolve(source, target)
 
@@ -417,6 +427,40 @@ class ConnectEntities(Tool):
             if not found_entity.position.is_close(position, tolerance=1.5):
                 return position
         return found_entity
+
+    def _raise_if_position_on_fluid_device(self, endpoint, role: str) -> None:
+        """LOCAL PATCH (#55/G10): 裸坐标落在流体设备脚印内时给出可执行的报错。
+
+        流体设备（boiler / steam-engine / offshore-pump / pumpjack / 化工厂 / 炼油厂）
+        的连接几何由 `connection_points` 决定；用裸坐标连接时解析器把它当普通
+        waypoint，既不能从设备中心铺管、也对不上端口 ⇒ 必然失败且不透原因。
+        仅当「该坐标仍是 Position（= 未解析成实体）且某流体设备的脚印覆盖它」才报；
+        坐标精确命中 connection_points 的官方用法在 `_check_for_fluidhandlers`
+        已被解析成实体，不会走到这里。
+        """
+        if not isinstance(endpoint, Position):
+            return
+        try:
+            candidates = self.get_entities(position=endpoint, radius=0.5)
+        except Exception:  # noqa: BLE001 - 查询失败时保持旧行为（走原有报错路径）
+            return
+        for entity in candidates:
+            if not isinstance(entity, (FluidHandler, MultiFluidHandler)):
+                continue
+            dims = entity.tile_dimensions
+            half_w = dims.tile_width / 2
+            half_h = dims.tile_height / 2
+            dx = abs(endpoint.x - entity.position.x)
+            dy = abs(endpoint.y - entity.position.y)
+            if dx <= half_w + 0.001 and dy <= half_h + 0.001:
+                raise Exception(
+                    f"Cannot connect pipes via raw coordinates: the {role} waypoint {endpoint} "
+                    f"lies on the fluid device {entity.name} at {entity.position}. Fluid devices "
+                    f"(pumps, boilers, steam engines, refineries) must be passed as entity objects "
+                    f"so their connection_points can be resolved, e.g. "
+                    f"connect_entities(pump_entity, boiler_entity, Prototype.Pipe). Only belts "
+                    f"and pipes can be connected directly between raw coordinates."
+                )
 
     def _check_for_fluidhandlers(self, position: Position):
         """

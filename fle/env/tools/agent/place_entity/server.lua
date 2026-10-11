@@ -283,7 +283,46 @@ storage.actions.place_entity = function(player_index, entity, direction, x, y, e
                         return serialized
                     end
                 else
-                    error("\"Could not find a suitable position to place " .. entity .. " near the target location.\"")
+                    -- LOCAL PATCH (#56/G2, 2026-10-11): 「找不到合适位置」不再裸报。
+                    -- 旧行为只说 "Could not find a suitable position ... near the target
+                    -- location."，不透任何原因（P4 锅炉定位烧掉多步，docs/08 §16.2 G2）。
+                    -- 这里对原始目标格做一次诊断：脚印内阻挡实体 + 水面，
+                    -- 与 exact 分支 / create_entity nil 分支的 "blocked by: ..." 同风格。
+                    local diag_area = {
+                        {position.x + entity_prototype.collision_box.left_top.x, position.y + entity_prototype.collision_box.left_top.y},
+                        {position.x + entity_prototype.collision_box.right_bottom.x, position.y + entity_prototype.collision_box.right_bottom.y}
+                    }
+                    local diag_blocking = {}
+                    for _, blocking_entity in ipairs(player.surface.find_entities_filtered{area = diag_area}) do
+                        if blocking_entity.name ~= "character" then
+                            table.insert(diag_blocking, blocking_entity.name .. " at x=" .. blocking_entity.position.x .. " y=" .. blocking_entity.position.y)
+                        end
+                    end
+                    local diag_water = false
+                    for check_x = math.floor(diag_area[1][1]), math.ceil(diag_area[2][1]) do
+                        for check_y = math.floor(diag_area[1][2]), math.ceil(diag_area[2][2]) do
+                            if is_water_tile(player.surface.get_tile(check_x, check_y).name) then
+                                diag_water = true
+                                break
+                            end
+                        end
+                        if diag_water then break end
+                    end
+                    local diag_reason = ""
+                    if #diag_blocking > 0 then
+                        diag_reason = "blocked by: " .. table.concat(diag_blocking, ", ")
+                    end
+                    if diag_water then
+                        diag_reason = diag_reason .. (#diag_reason > 0 and "; " or "") .. "footprint overlaps water"
+                    end
+                    if diag_reason == "" then
+                        if entity == "offshore-pump" then
+                            diag_reason = "no shore-adjacent position within 20 tiles (offshore-pump must sit on land next to a water tile)"
+                        else
+                            diag_reason = "no unblocked position within 10 tiles of the target location"
+                        end
+                    end
+                    error("\"Could not find a suitable position to place " .. entity .. " near the target location x=" .. position.x .. " y=" .. position.y .. " - " .. diag_reason .. "\"")
                 end
             else
                 -- Clear existing entities if exact placement is required

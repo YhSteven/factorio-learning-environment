@@ -155,13 +155,26 @@ storage.actions.craft_item = function(player_index, entity, count)
         local actual_craft_count = crafts_needed * recipe.products[1].amount
 
         -- Check for missing ingredients
+        -- LOCAL PATCH (#58/G13, 2026-10-11): 子配料递归可能**部分成功** —— 已搓出的
+        -- 中间品已经进背包，但旧报错只说「couldn't craft a required sub-ingredient...」
+        -- ⇒ agent 误判什么都没造出来、再搓一遍 = 重复耗料（docs/08 §16.6 G13）。
+        -- 报错必须带「已产出并进背包」清单（顶层的 "Successfully crafted %dx ..." 已有，
+        -- 这里补子配料路径；慢模式 begin_crafting 部分排队按成功返回，无此问题）。
+        local sub_crafted_notes = {}
         local missing_ingredients = get_missing_ingredients(player, recipe, actual_craft_count)
         if next(missing_ingredients) then
             -- Try to craft each missing ingredient
             for ingredient_name, needed_amount in pairs(missing_ingredients) do
                 local crafted_amount, error_msg = attempt_craft(player, ingredient_name, needed_amount, attempted_recipes)
+                if crafted_amount > 0 then
+                    table.insert(sub_crafted_notes, ingredient_name .. " x" .. crafted_amount)
+                end
                 if crafted_amount == 0 then
-                    return 0, "couldn't craft a required sub-ingredient for ".. entity_name .. " - " .. ingredient_name .. " - " .. error_msg .. ". Required " ..ingredient_name.. " amount for " .. entity_name .. " - " .. needed_amount .. ")"
+                    local note = ""
+                    if #sub_crafted_notes > 0 then
+                        note = " Note: already crafted and added to your inventory: " .. table.concat(sub_crafted_notes, ", ") .. "."
+                    end
+                    return 0, "couldn't craft a required sub-ingredient for ".. entity_name .. " - " .. ingredient_name .. " - " .. error_msg .. ". Required " ..ingredient_name.. " amount for " .. entity_name .. " - " .. needed_amount .. ")" .. note
                 end
             end
         end
@@ -188,7 +201,12 @@ storage.actions.craft_item = function(player_index, entity, count)
                 for name, amount in pairs(missing) do
                     missing_str = missing_str .. name .. " x" .. amount .. ", "
                 end
-                return 0, "still missing ingredients - " .. missing_str:sub(1, -3)
+                -- LOCAL PATCH (#58/G13): 与子配料路径一致 —— 已搓出的中间品不能瞒报
+                local note = ""
+                if #sub_crafted_notes > 0 then
+                    note = " Note: already crafted and added to your inventory: " .. table.concat(sub_crafted_notes, ", ") .. "."
+                end
+                return 0, "still missing ingredients - " .. missing_str:sub(1, -3) .. note
             end
 
             for _, ingredient in pairs(recipe.ingredients) do

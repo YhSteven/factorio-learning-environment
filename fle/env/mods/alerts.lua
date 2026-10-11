@@ -240,6 +240,46 @@ local function is_electric_producer(entity)
     return entity.type == "generator" or entity.type == "solar-panel"
 end
 
+-- LOCAL PATCH (#57/G12, 2026-10-11): 「未连电力网」告警附最近电杆信息。旧告警只说
+-- not connected to power network，不透任何原因 —— P5 实测电杆差一格 ⇒ 引擎恒
+-- NOT_PLUGGED_IN_ELECTRIC_NETWORK，agent 只能盲试（docs/08 §16.5 G12）。
+-- 附上最近电杆的名称/位置/距离，agent 可直接判断「挪杆」还是「补杆」。
+-- ⚠️ 返回的是**引号内**的文本：告警串整体保持 \'...\' 单引号包裹（真机实测，附录若落在
+-- 闭引号之外，_lua2python 会解析脱轨，把实体坐标吸进 warnings）⇒ 不得含单引号。
+local function describe_nearest_pole(entity)
+    if not entity.valid or not entity.surface then
+        return ""
+    end
+    local poles = entity.surface.find_entities_filtered{
+        position = entity.position,
+        radius = 20,
+        type = "electric-pole",
+        force = entity.force,
+    }
+    local best = nil
+    local best_dist = nil
+    for _, pole in ipairs(poles) do
+        if pole.valid and pole ~= entity then
+            local dx = pole.position.x - entity.position.x
+            local dy = pole.position.y - entity.position.y
+            local dist = math.sqrt(dx * dx + dy * dy)
+            if best_dist == nil or dist < best_dist then
+                best = pole
+                best_dist = dist
+            end
+        end
+    end
+    if best == nil then
+        return " (no electric pole within 20 tiles - place one next to this entity)"
+    end
+    -- ⚠️ 不读 prototype.supply_area_distance：2.0 已删该字段（#12 渲染崩溃真因，
+    -- lua_audit L1-removed-api 会拦）。供电半径写进手册（小/中杆 2.5），不在这里猜。
+    return string.format(
+        " (nearest electric pole: %s at x=%s y=%s, %.1f tiles away - move this entity next to a pole or place a new pole closer; poles only supply entities within their small supply radius)",
+        best.name, best.position.x, best.position.y, best_dist
+    )
+end
+
 -- Define a function to check if the entity (boiler) has necessary input liquid
 local function has_input_liquid(entity)
     if entity.type == "boiler" then
@@ -334,12 +374,13 @@ function storage.utils.get_issues(entity)
             -- Producers only when the network is genuinely missing. Being connected but idle
             -- (no steam/water, no demand, night for solar) is normal and must NOT warn -- P0-25.
             if not entity.electric_network_id then
-                table.insert(issues, "\'not connected to power network\'")
+                table.insert(issues, "\'not connected to power network" .. describe_nearest_pole(entity) .. "\'")
             end
         elseif entity.electric_network_id then
             table.insert(issues, "\'not receiving electricity\'")
         else
-            table.insert(issues, "\'not connected to power network\'")
+            -- LOCAL PATCH (#57/G12): 未接网的告警附最近电杆信息（见 describe_nearest_pole）
+            table.insert(issues, "\'not connected to power network" .. describe_nearest_pole(entity) .. "\'")
         end
     end
 
