@@ -234,8 +234,13 @@ def consolidate_underground_belts(belt_groups):
 
                         if "right" in entrance.inventory:
                             if "right" in exit.inventory:
+                                # LOCAL PATCH (2026-10-12; docs/02 §7.23 E 顺带发现 #6):
+                                # 原为 `exit.inventory["right"] + exit.inventory["right"]`
+                                # （copy-paste 自左分支却没改左手）⇒ 合并后的地下带
+                                # **右侧带料把 exit 算两遍、entrance 漏算**（纯观测面
+                                # 虚高，不影响游戏状态）。与左分支对称改为 entrance + exit。
                                 right_inventory = (
-                                    exit.inventory["right"] + exit.inventory["right"]
+                                    entrance.inventory["right"] + exit.inventory["right"]
                                 )
                             else:
                                 right_inventory = exit.inventory["right"]

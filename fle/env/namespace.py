@@ -1036,60 +1036,89 @@ class FactorioNamespace:
             return True
 
         elif isinstance(node, ast.Try):
+            # LOCAL PATCH (2026-10-12; docs/02 §7.23 E 顺带发现 #7):
+            # 本分支原来的写法把 `return result` 放在 `finally:` 块内 ——
+            # ① CPython 3.14 导入本文件即发
+            #    `SyntaxWarning: 'return' in a 'finally' block'`
+            #    （`-W error::SyntaxWarning` 下直接 SyntaxError）；
+            # ② 「return 吞异常」的语义藏在 finally 里、可读性差。
+            # 现改为显式挂起态记账：语义与 CPython 完全一致
+            # （finalbody 的 RETURN 仍覆盖挂起的 RETURN、仍吞掉在途异常，
+            #   finalbody 自身抛异常仍替换在途异常向上传播），
+            # 但不再有 `finally:` 内的 return。
+            pending_return = None
+            pending_exc = None
+            pending_base_exc = None
+            finalbody_return = None
             try:
-                result = self.execute_body(node.body, eval_dict, node)
-                # Handle return statement propagation
-                if (
-                    isinstance(result, tuple)
-                    and len(result) == 2
-                    and result[0] == "RETURN"
-                ):
-                    return result
-            except Exception as e:
-                handled = False
-                for handler in node.handlers:
-                    if handler.type is None or isinstance(
-                        e,
-                        eval(
-                            compile(ast.Expression(handler.type), "file", "eval"),
-                            eval_dict,
-                        ),
+                try:
+                    result = self.execute_body(node.body, eval_dict, node)
+                    # Handle return statement propagation
+                    if (
+                        isinstance(result, tuple)
+                        and len(result) == 2
+                        and result[0] == "RETURN"
                     ):
-                        if handler.name:
-                            eval_dict[handler.name] = e
-                        result = self.execute_body(handler.body, eval_dict, handler)
+                        pending_return = result
+                except Exception as e:
+                    handled = False
+                    for handler in node.handlers:
+                        if handler.type is None or isinstance(
+                            e,
+                            eval(
+                                compile(ast.Expression(handler.type), "file", "eval"),
+                                eval_dict,
+                            ),
+                        ):
+                            if handler.name:
+                                eval_dict[handler.name] = e
+                            result = self.execute_body(handler.body, eval_dict, handler)
+                            # Handle return statement propagation
+                            if (
+                                isinstance(result, tuple)
+                                and len(result) == 2
+                                and result[0] == "RETURN"
+                            ):
+                                pending_return = result
+                            handled = True
+                            break
+
+                    if not handled:
+                        pending_exc = e
+                else:
+                    if node.orelse:
+                        result = self.execute_body(node.orelse, eval_dict, node)
                         # Handle return statement propagation
                         if (
                             isinstance(result, tuple)
                             and len(result) == 2
                             and result[0] == "RETURN"
                         ):
-                            return result
-                        handled = True
-                        break
-
-                if not handled:
-                    raise
-            else:
-                if node.orelse:
-                    result = self.execute_body(node.orelse, eval_dict, node)
-                    # Handle return statement propagation
-                    if (
-                        isinstance(result, tuple)
-                        and len(result) == 2
-                        and result[0] == "RETURN"
-                    ):
-                        return result
-            finally:
-                if node.finalbody:
-                    result = self.execute_body(node.finalbody, eval_dict, node)
-                    # Handle return statement propagation
-                    if (
-                        isinstance(result, tuple)
-                        and len(result) == 2
-                        and result[0] == "RETURN"
-                    ):
-                        return result
+                            pending_return = result
+                finally:
+                    # finalbody 在所有退出路径（正常 / return / 异常）都会执行；
+                    # 这里只「记录」它的 RETURN，不在 finally 内 return。
+                    if node.finalbody:
+                        result = self.execute_body(node.finalbody, eval_dict, node)
+                        if (
+                            isinstance(result, tuple)
+                            and len(result) == 2
+                            and result[0] == "RETURN"
+                        ):
+                            finalbody_return = result
+            except BaseException as base_exc:  # noqa: BLE001
+                # 只捕获以便在 finalbody 之后按 CPython 语义决定「吞掉再传播」
+                # （finalbody RETURN 优先，否则原样抛回）；绝不静默丢弃。
+                pending_base_exc = base_exc
+            # finalbody 的 RETURN 覆盖一切（含吞掉在途异常）—— CPython 行为
+            if finalbody_return is not None:
+                return finalbody_return
+            if pending_base_exc is not None:
+                raise pending_base_exc
+            if pending_exc is not None:
+                raise pending_exc
+            if pending_return is not None:
+                return pending_return
             # LOCAL PATCH (FLE defect #11): same break/continue propagation as
             # `ast.If` -- a try/except block inside a loop used to swallow the
             # signal too.
