@@ -125,8 +125,21 @@ class LuaScriptManager:
         tool_dir = _get_dir("tools")
         for lua_file in lua_files:
             # Get the tool name from the directory path
-            rel_path = os.path.relpath(lua_file, Path(tool_dir))
-            tool_name = os.path.dirname(rel_path)
+            # LOCAL PATCH (FLE defect #63): normalise to POSIX separators. On
+            # Windows `os.path.dirname` yields `agent\get_entities`, and the
+            # resulting key `agent\get_entities/server.lua` was interpolated
+            # into a single-quoted Lua string by `update_game_checksum`:
+            #   * `\g` / `\c` / ... is an *invalid* Lua escape sequence -> the
+            #     whole `/sc` chunk failed to compile and the checksum was
+            #     silently never stored;
+            #   * `\r` / `\n` / `\t` ARE valid escapes -> the key was stored
+            #     with a control character instead of the backslash.
+            # Either way the game-side key could never match the Python-side
+            # key, so the script cache never hit and every connect re-pushed
+            # all 50 tool scripts (docs/02 §7.72 #63).
+            rel_path = os.path.relpath(lua_file, Path(tool_dir)).replace("\\", "/")
+            # Pure-POSIX split (never rely on os.path on a mixed-separator path)
+            tool_name = rel_path.rsplit("/", 1)[0] if "/" in rel_path else ""
             script_name = os.path.basename(lua_file)
 
             # Load the lua script content
@@ -165,8 +178,13 @@ class LuaScriptManager:
         return scripts_to_load
 
     def update_game_checksum(self, rcon_client, script_name: str, checksum: str):
+        # LOCAL PATCH (FLE defect #63): never interpolate a raw Windows path into
+        # a single-quoted Lua string -- `\g`/`\c` break the chunk and `\r`/`\n`
+        # silently corrupt the key. Keys are POSIX-normalised here as well so
+        # callers cannot reintroduce the bug.
+        safe_name = script_name.replace("\\", "/").replace("'", "\\'")
         rcon_client.send_command(
-            f"/sc storage.set_lua_script_checksum('{script_name}', '{checksum}')"
+            f"/sc storage.set_lua_script_checksum('{safe_name}', '{checksum}')"
         )
 
     def _clear_game_checksums(self, rcon_client):
@@ -218,7 +236,12 @@ class LuaScriptManager:
             return wrapper
 
         # Walk through all subdirectories
-        for dirpath, _, filenames in os.walk(tool_dir):
+        for dirpath, dirnames, filenames in os.walk(tool_dir):
+            # LOCAL PATCH (FLE defect #64): make the walk order deterministic
+            # (`admin` before `agent`) so that a tool name provided by both trees
+            # always resolves to the same implementation, and surface the clash
+            # instead of silently overwriting `instance.controllers[...]`.
+            dirnames.sort()
             # Skip the root directory
             if dirpath == tool_dir:
                 continue
@@ -261,7 +284,16 @@ class LuaScriptManager:
                         )
 
                         # Store the controller and add it to namespace
-                        instance.controllers[tool_name.lower()] = callable_instance
+                        controller_key = tool_name.lower()
+                        if controller_key in instance.controllers:
+                            # LOCAL PATCH (FLE defect #64): was a silent overwrite.
+                            print(
+                                f"WARNING: tool name '{controller_key}' exists in more than one "
+                                f"directory (latest: {directory_name}/{tool_name}); "
+                                f"instance.controllers['{controller_key}'] is replaced by the "
+                                f"later one (walk order is now deterministic: admin < agent)"
+                            )
+                        instance.controllers[controller_key] = callable_instance
 
                         if directory_name == "admin":
                             # If this is an admin method, we hide it in the namespace by adding a shebang

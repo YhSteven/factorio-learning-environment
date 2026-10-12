@@ -106,6 +106,11 @@ local function find_offshore_pump_position(player, center_pos)
     return nil
 end
 
+-- LOCAL PATCH (FLE defect #61, 2026-10-12): underground-belt pairing lives in
+-- `storage.utils.pair_underground_belt` (mods/utils.lua) so both placement tools can
+-- use it. It re-creates whichever half still has to turn around in the opposite
+-- direction, which is what makes the engine link the two halves (see that function's
+-- comment for the measured engine facts). docs/02 §7.70 / §7.72 #61.
 storage.actions.place_entity = function(player_index, entity, direction, x, y, exact)
     -- Ensure we have a valid character, recreating if necessary
     local player = storage.utils.ensure_valid_character(player_index)
@@ -177,6 +182,8 @@ storage.actions.place_entity = function(player_index, entity, direction, x, y, e
             }
 
             if placed_entity then
+                -- LOCAL PATCH (FLE defect #61): pair the two halves of an underground belt
+                placed_entity = storage.utils.pair_underground_belt(player, entity, placed_entity)
                 player.remove_item{name = entity, count = 1}
                 player.cursor_ghost = nil  -- Clear the ghost
                 return storage.utils.serialize_entity(placed_entity)
@@ -273,6 +280,8 @@ storage.actions.place_entity = function(player_index, entity, direction, x, y, e
                         direction = entity_direction,
                     }
                     if have_built then
+                        -- LOCAL PATCH (FLE defect #61): pair underground-belt halves
+                        have_built = storage.utils.pair_underground_belt(player, entity, have_built)
                         -- LOCAL PATCH (P0-13): 直接用 create_entity 返回的实体序列化返回，
                         -- 不再用「吸附前的候选格」回读 get_entity —— 引擎会把 offshore-pump
                         -- 等实体吸附到半格位（如 (-15.5,34.5)），严格 bbox 回读找不到 ⇒ 抛「找不到
@@ -419,6 +428,8 @@ storage.actions.place_entity = function(player_index, entity, direction, x, y, e
         }
 
         if have_built then
+            -- LOCAL PATCH (FLE defect #61): pair underground-belt halves
+            have_built = storage.utils.pair_underground_belt(player, entity, have_built)
             -- LOCAL PATCH (P0-13): 同非精确分支 —— 直接返回 create_entity 建成的实体，
             -- 避免「已放下却按请求格回读失败（实体被引擎吸附到半格位）⇒ 假失败 + 物品已扣」。
             local serialized = storage.utils.serialize_entity(have_built)

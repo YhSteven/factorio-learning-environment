@@ -341,3 +341,96 @@ storage.utils.format_inventory_for_error = function(player)
 
     return table.concat(items, ", ")
 end
+-- LOCAL PATCH (FLE defect #61, 2026-10-12): underground-belt pairing.
+-- `surface.create_entity` does **not** run the player-placement logic that pairs the two
+-- halves of an underground belt: every half created through the tool chain stayed
+-- `belt_to_ground_type = input` with `neighbours == nil`, so a bridge (the main way to
+-- cross water / route around obstacles) could never be built by the agent
+-- (docs/02 §7.70 / §7.72 #61).
+-- Engine facts measured on 2.0.73 (state/tmp/_fix_probe_61*.py):
+--   * the pair forms when the **second** half is created *facing* the first one
+--     (opposite direction); the engine then flips the new half's direction back to the
+--     travel direction, marks it `output`, and items really do transit (verified by
+--     injecting coal into the input and reading it off the belt east of the output);
+--   * `LuaEntity.belt_to_ground_type` is **read only** and `create_entity` silently
+--     ignores a `belt_to_ground_type` parameter, so the direction used at creation time
+--     is the only lever we have.
+local UG_UNIT = {
+    [defines.direction.north] = {x = 0, y = -1},
+    [defines.direction.east] = {x = 1, y = 0},
+    [defines.direction.south] = {x = 0, y = 1},
+    [defines.direction.west] = {x = -1, y = 0},
+}
+local UG_OPPOSITE = {
+    [defines.direction.north] = defines.direction.south,
+    [defines.direction.east] = defines.direction.west,
+    [defines.direction.south] = defines.direction.north,
+    [defines.direction.west] = defines.direction.east,
+}
+
+-- Search `sign` tiles along `dir` from `position` for an unpaired half of the same belt.
+local function ug_find_partner(surface, name, position, dir, sign)
+    local unit = UG_UNIT[dir]
+    if not unit then return nil end
+    local proto = prototypes.entity[name]
+    local maxd = (proto and proto.max_underground_distance) or 5
+    for d = 1, maxd do
+        local p = {
+            x = position.x + unit.x * d * sign,
+            y = position.y + unit.y * d * sign,
+        }
+        local e = surface.find_entity(name, p)
+        if e and e.valid and e.type == "underground-belt" and not e.neighbours then
+            return e
+        end
+    end
+    return nil
+end
+
+local function ug_lanes_empty(e)
+    for i = 1, 2 do
+        local ok, line = pcall(function() return e.get_transport_line(i) end)
+        if ok and line then
+            if next(line.get_contents() or {}) ~= nil then return false end
+        end
+    end
+    return true
+end
+
+-- Pair a freshly created underground belt and return the entity to serialise.
+-- Whichever half has to "turn around" is destroyed and re-created in the opposite
+-- direction; that is lossless because we only do it while the half is still unpaired
+-- with both lanes empty. The engine then links the halves and normalises the output's
+-- direction back to the travel direction.
+function storage.utils.pair_underground_belt(player, name, created)
+    if not created or not created.valid or created.type ~= "underground-belt" then
+        return created
+    end
+    if created.neighbours then return created end
+    local dir = created.direction
+    if not UG_UNIT[dir] then return created end
+    local pos = created.position
+    -- (1) the near half already waits behind us -> turn around and face it
+    if ug_find_partner(player.surface, name, pos, dir, -1) then
+        created.destroy()
+        return player.surface.create_entity{
+            name = name,
+            force = player.force,
+            position = pos,
+            direction = UG_OPPOSITE[dir],
+        }
+    end
+    -- (2) the far half was placed first, ahead of us -> turn it around to face us
+    local far = ug_find_partner(player.surface, name, pos, dir, 1)
+    if far and ug_lanes_empty(far) then
+        local fpos, fdir = far.position, far.direction
+        far.destroy()
+        player.surface.create_entity{
+            name = name,
+            force = player.force,
+            position = fpos,
+            direction = UG_OPPOSITE[fdir] or fdir,
+        }
+    end
+    return created
+end

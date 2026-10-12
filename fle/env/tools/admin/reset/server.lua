@@ -48,6 +48,18 @@ storage.actions.reset = function(inventories_json, reset_position, all_technolog
 	storage.actions.reset_production_stats()
 	storage.elapsed_ticks = 0
 
+	-- LOCAL PATCH (FLE defect #63 follow-up, 2026-10-12): re-snapshot the score baseline
+	-- on every non-keep_all reset so it can no longer depend on *whether* score/server.lua
+	-- happened to be uploaded this connect. With the script cache working again the upload
+	-- is skipped on a reused container, so a baseline inherited from a previous episode
+	-- (or from an earlier keep_all connect) used to leak into the `automated` number
+	-- returned by score(). Measured: a leftover baseline of 123456 makes score()[1] read
+	-- -123456 while score()[0] stays correct (the Python side subtracts the same baseline
+	-- again, which is why only the automated figure was affected).
+	if storage.actions.snapshot_initial_score then
+		storage.actions.snapshot_initial_score()
+	end
+
 	local inventories = safe_json_to_table(inventories_json)
 
 	-- Re-generate resources per agent (mirrors instance _reset)

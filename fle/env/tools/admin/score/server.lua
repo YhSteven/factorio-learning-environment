@@ -357,23 +357,12 @@ storage.actions.snapshot_initial_score = function()
     return 1
 end
 
-storage.actions.score = function()
-    local prod_score = production_score.get_production_scores()
-    prod_score["player"] = prod_score["player"] - storage.initial_score["player"]
-    
-    -- Try to get goal description from first player if available, otherwise skip
-    local goal_description = nil
-    if #game.players > 0 and game.players[1] and game.players[1].valid then
-        goal_description = game.players[1].get_goal_description()
-    end
-
-    if storage.goal ~= goal_description then
-      storage.goal = goal_description
-      --game.print(goal_description)
-      --if goal_description ~= nil and #goal_description > 1 then
-        --production_score["goal"] = goal_description[1]:gsub("-", "_")
-      --end
-      return dump(prod_score)
-    end
-    return dump(prod_score)
-end
+-- LOCAL PATCH (FLE defect #64): this file used to define its own
+-- `storage.actions.score` as well. `agent/score/server.lua` defines the same
+-- action key, so the two directories raced for one registration: whatever was
+-- pushed last won (measured: agent, which is the version the harness needs --
+-- it also reports the `automated` breakdown). The admin copy was therefore
+-- dead code, and `instance.controllers["score"]` was ambiguous between the two
+-- same-named tool directories. The duplicate registration is removed here;
+-- only `snapshot_initial_score` (admin-only, used by the keep_all reset) is
+-- kept. See docs/02 §7.72 #64.

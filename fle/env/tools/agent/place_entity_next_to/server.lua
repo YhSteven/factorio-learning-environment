@@ -542,6 +542,9 @@ storage.actions.place_entity_next_to = function(player_index, entity, ref_x, ref
         error("Failed to create entity " .. entity .. " at position " .. serpent.line(new_position))
     end
 
+    -- LOCAL PATCH (FLE defect #61): pair the two halves of an underground belt
+    new_entity = storage.utils.pair_underground_belt(player, entity, new_entity)
+
     local placement_info = storage.utils.serialize_entity(new_entity)
     
     local item_stack = {name = entity, count = 1}
