@@ -18,9 +18,8 @@ local function get_inventory_for_index(inventories, index)
 	return inv
 end
 
-storage.actions.reset = function(inventories_json, reset_position, all_technologies_researched, clear_entities)
-	-- Clear alerts, reset game state, and production stats
-	game.reset_game_state()
+storage.actions.reset = function(inventories_json, reset_position, all_technologies_researched, clear_entities, keep_all)
+	-- Episode bookkeeping only: none of this touches the imported world.
 	storage.alerts = {}
 	-- Async path requests belong to the previous episode. Factorio may cancel
 	-- them during reset without emitting a completion event, so do not retain
@@ -28,6 +27,24 @@ storage.actions.reset = function(inventories_json, reset_position, all_technolog
 	storage.paths = {}
 	storage.path_requests = {}
 	storage.clearance_entities = {}
+
+	-- LOCAL PATCH (keep_all): preserve everything that belongs to the imported
+	-- world, not to an episode. Without this branch a single connect wiped the
+	-- production statistics (LuaFlowStatistics.clear), the research state and
+	-- rockets_launched (regenerate_resources -> force.reset), the resource
+	-- amounts (every patch forced to 10000 / 300000) and the inventory.
+	-- ⚠️ UPSTREAM POLICY (user, 2026-10-12): local-only requirement
+	-- ("continue from a save"), DO NOT PUSH UPSTREAM as-is.
+	if keep_all then
+		storage.elapsed_ticks = 0
+		if storage.actions.snapshot_initial_score then
+			storage.actions.snapshot_initial_score()
+		end
+		return 1
+	end
+
+	-- Clear the game state (scenario flags only) and production stats
+	game.reset_game_state()
 	storage.actions.reset_production_stats()
 	storage.elapsed_ticks = 0
 

@@ -30,7 +30,30 @@ local function generate_agent_color(index, total_agents)
 end
 
 -- Create agent characters script
-storage.actions.create_agent_characters = function(num_agents)
+storage.actions.create_agent_characters = function(num_agents, keep_all)
+    -- LOCAL PATCH (keep_all): if the imported save carries a `character` entity
+    -- (multiplayer saves do), reuse it instead of destroying every character and
+    -- spawning a fresh one at the origin. Verified on 2026-10-12 that a
+    -- single-player save hosted on a dedicated server carries NO character
+    -- entity at all - its inventory lives in the owning player's record and
+    -- belongs to that player, NOT to the agent - so the usual empty-spawn is
+    -- correct there and nothing is inherited.
+    -- ⚠️ UPSTREAM POLICY (user, 2026-10-12): local-only requirement
+    -- ("continue from a save"), DO NOT PUSH UPSTREAM as-is.
+    if keep_all and (tonumber(num_agents) or 1) == 1 then
+        for _, entity in pairs(game.surfaces[1].find_entities_filtered{type = "character"}) do
+            if entity and entity.valid then
+                storage.agent_characters = {[1] = entity}
+                player = entity
+                -- Deliberately not touching `surface.always_day` here: that is a
+                -- property of the imported world, not something we get to reset.
+                return true
+            end
+        end
+        -- No character entity in the save: fall through and build one the
+        -- usual way (a brand-new player starts empty, as designed).
+    end
+
     -- delete all character entities on the surface
     for _, entity in pairs(game.surfaces[1].find_entities_filtered{type = "character"}) do
         entity.destroy()

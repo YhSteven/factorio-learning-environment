@@ -12,6 +12,7 @@ class Reset(Tool):
         reset_position=False,
         all_technologies_researched=True,
         clear_entities=True,
+        keep_all=False,
     ):
         """
         Reset the Factorio game state via Lua action, mirroring FactorioInstance.reset/_reset.
@@ -21,6 +22,9 @@ class Reset(Tool):
                     or a dict keyed by agent index (int or str) mapping to {item_name: count}.
                 reset_position (bool): If True, teleport agents to spawn offsets.
                 all_technologies_researched (bool): If True, research all technologies; else reset force.
+                keep_all (bool): LOCAL PATCH - keep the imported world's production
+                    statistics, research, resource amounts and inventory; only
+                    per-episode bookkeeping (alerts, path requests) is cleared.
         """
         if inventories is None:
             inventories = {}
@@ -43,10 +47,13 @@ class Reset(Tool):
         # Encode to JSON string for Lua
         inventories_json = json.dumps(dict_inventories)
 
+        # LOCAL PATCH (keep_all): see docs/02 §7.67.
+        # ⚠️ UPSTREAM POLICY (user, 2026-10-12): local-only, DO NOT PUSH UPSTREAM.
         response, _ = self.execute(
             inventories_json,
             reset_position,
             all_technologies_researched,
             clear_entities,
+            keep_all,
         )
         return response

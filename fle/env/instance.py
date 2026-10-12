@@ -196,6 +196,7 @@ class FactorioInstance:
         num_agents=1,
         reset_speed=10,
         reset_paused=False,
+        keep_all=False,
         **kwargs,
     ):
         self.id = str(uuid.uuid4())[:8]
@@ -208,6 +209,30 @@ class FactorioInstance:
         self._is_initialised = False
 
         self.peaceful = peaceful
+        # LOCAL PATCH (keep_all): connect to an imported save without wiping it.
+        # `clear_entities=False` only spares the buildings; the production
+        # history, research, rocket count and resource amounts were still
+        # destroyed by `initialise()`. The agent stays a brand-new player with
+        # an empty inventory: a dedicated-server import carries no character
+        # entity, and the save's player record belongs to its owner.
+        # See docs/02 §7.68.
+        # ⚠️ UPSTREAM POLICY (user, 2026-10-12): this is our own requirement
+        # (continue from a save), keep it locally and DO NOT PUSH IT UPSTREAM.
+        self.keep_all = keep_all
+        if self.keep_all and self.num_agents > 1:
+            raise ValueError("keep_all=True requires num_agents=1")
+        if self.keep_all and all_technologies_researched:
+            print(
+                "WARNING: keep_all=True preserves the save's research state; "
+                "all_technologies_researched=True is ignored"
+            )
+        if self.keep_all and inventory:
+            print(
+                "WARNING: keep_all=True spawns the agent as a brand-new player "
+                "(an imported save carries no character entity to inherit); "
+                "the `inventory` argument is ignored"
+            )
+
         self.namespaces = [self.namespace_class(self, i) for i in range(num_agents)]
 
         # Create GameControl instance with render_message tool
@@ -241,7 +266,7 @@ class FactorioInstance:
             inventory = {}
         self.initial_inventory = inventory
         self.all_technologies_researched = all_technologies_researched
-        self.initialise(fast, all_technologies_researched, clear_entities)
+        self.initialise(fast, all_technologies_researched, clear_entities, keep_all)
         self.initial_score = 0
         try:
             self.first_namespace.score()
@@ -257,7 +282,7 @@ class FactorioInstance:
             self.lua_script_manager.setup_tools(self)
             for ns in self.namespaces:
                 ns._freeze_protected_names()
-            self.initialise(fast, all_technologies_researched, clear_entities)
+            self.initialise(fast, all_technologies_researched, clear_entities, keep_all)
 
         self.initial_score, _ = self.first_namespace.score()
         # Register the cleanup method to be called on exit (only once per process)
@@ -290,12 +315,17 @@ class FactorioInstance:
         reset_position: bool = False,
         all_technologies_researched: bool = None,
         clear_entities: bool = True,
+        keep_all: bool = None,
     ):
         # Use the stored value from __init__ if not explicitly provided
         if all_technologies_researched is None:
             all_technologies_researched = getattr(
                 self, "all_technologies_researched", False
             )
+        if keep_all is None:
+            # LOCAL PATCH (keep_all): episodes keep behaviour used at connect time
+            # unless the caller overrides it for this reset.
+            keep_all = getattr(self, "keep_all", False)
 
         # Ensure RCON connection is healthy before resetting
         # This prevents cascading failures when the connection was broken by a previous test
@@ -313,7 +343,11 @@ class FactorioInstance:
             # Reset the game instance
             inventories = [self.initial_inventory] * self.num_agents
             self.first_namespace._reset(
-                inventories, reset_position, all_technologies_researched, clear_entities
+                inventories,
+                reset_position,
+                all_technologies_researched,
+                clear_entities,
+                keep_all,
             )
         else:
             # Reset the game instance with the correct player's inventory and messages if multiagent
@@ -322,6 +356,7 @@ class FactorioInstance:
                 reset_position,
                 all_technologies_researched,
                 clear_entities,
+                keep_all,
             )
 
             # Load entities into the game
@@ -509,10 +544,21 @@ class FactorioInstance:
             return ""
 
     def initialise(
-        self, fast=True, all_technologies_researched=True, clear_entities=True
+        self,
+        fast=True,
+        all_technologies_researched=True,
+        clear_entities=True,
+        keep_all=None,
     ):
+        if keep_all is None:
+            # LOCAL PATCH (keep_all): a bare `initialise()` (e.g. from the A2A
+            # subclass) must not undo the option the instance was built with.
+            keep_all = getattr(self, "keep_all", False)
+        if keep_all and self.num_agents > 1:
+            raise ValueError("keep_all=True requires num_agents=1")
+
         self.rcon_client.send_command(f"/sc storage.fast = {str(fast).lower()}")
-        self.first_namespace._create_agent_characters(self.num_agents)
+        self.first_namespace._create_agent_characters(self.num_agents, keep_all)
 
         init_scripts = [
             "lualib_util",
@@ -526,12 +572,15 @@ class FactorioInstance:
         for script_name in init_scripts:
             self.lua_script_manager.load_init_into_game(script_name)
 
-        if self.peaceful:
+        # LOCAL PATCH (keep_all): everything below either mutates the imported
+        # world (enemies, terrain) or wipes its history, so both are skipped.
+        if self.peaceful and not keep_all:
             self.rcon_client.send_command("/sc storage.utils.remove_enemies()")
 
         # Generate chunks around origin to enable long-distance pathfinding
         # 4000 tiles in each direction = 125 chunks (each chunk is 32x32 tiles)
-        self._generate_chunks(center_x=0, center_y=0, chunk_radius=25)
+        if not keep_all:
+            self._generate_chunks(center_x=0, center_y=0, chunk_radius=25)
 
         inventories = [self.initial_inventory] * self.num_agents
 
@@ -540,8 +589,13 @@ class FactorioInstance:
             reset_position=False,
             all_technologies_researched=all_technologies_researched,
             clear_entities=clear_entities,
+            keep_all=keep_all,
         )
-        self.first_namespace._clear_collision_boxes()
+        # Skipped under keep_all too: it deletes `simple-entity-with-owner`
+        # entities within 500 tiles of the agent, which is a world mutation.
+        # Nothing owns clearance entities when resuming straight from a save.
+        if not keep_all:
+            self.first_namespace._clear_collision_boxes()
 
     def get_warnings(self, seconds=10):
         """

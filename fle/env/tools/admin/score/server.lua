@@ -334,9 +334,27 @@ end
 
 storage.goal = nil
 
+local function refresh_initial_score()
+    local scores = production_score.get_production_scores()
+    if scores then
+        storage.initial_score = scores
+    end
+end
+
 local scores = production_score.get_production_scores()
 if scores then
     storage.initial_score = scores
+end
+
+-- LOCAL PATCH (keep_all): the block above only runs when this file is
+-- actually uploaded, and `cache_scripts=True` skips the upload whenever the
+-- checksum matches, so a resumed container keeps the baseline of a previous
+-- episode. Exposing the re-snapshot lets a keep_all connect rebase the score
+-- on whatever the imported save had already produced.
+-- ⚠️ UPSTREAM POLICY (user, 2026-10-12): local-only, DO NOT PUSH UPSTREAM.
+storage.actions.snapshot_initial_score = function()
+    refresh_initial_score()
+    return 1
 end
 
 storage.actions.score = function()
