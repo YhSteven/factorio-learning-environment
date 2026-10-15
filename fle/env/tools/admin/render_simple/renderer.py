@@ -37,6 +37,7 @@ from fle.env.tools.admin.render_simple.layers.natural_layer_renderer import (
 )
 from fle.env.tools.admin.render_simple.layers.entities_layer_renderer import (
     EntitiesLayerRenderer,
+    has_mixed_lane,
 )
 
 
@@ -117,6 +118,10 @@ class Renderer:
         # Track entity statuses present in the map
         statuses_present = set()
 
+        # LOCAL PATCH (2026-10-16): whether any belt lane in view carries 2+ item
+        # types -- drives the "Mixed lane (top-right)" legend entry.
+        mixed_present = False
+
         # Track electricity networks and their colors
         network_colors = {}
 
@@ -179,6 +184,11 @@ class Renderer:
                 ):
                     statuses_present.add(entity.status)
 
+                # LOCAL PATCH (2026-10-16): mixed belt lanes get the top-right
+                # marker, so the legend has to know whether any are in view.
+                if not mixed_present and has_mixed_lane(entity):
+                    mixed_present = True
+
         # Update the entity list
         entities = filtered_entities
 
@@ -226,7 +236,10 @@ class Renderer:
                 statuses_present,
                 network_colors,
                 layers,
+                mixed_present,
             )
+            # print(f"[DBG] mixed_present={mixed_present} legend_items="
+            #       f"{legend_dimensions.get('status_items')}", flush=True)
 
         # Calculate final image dimensions
         dimensions = self.image_calculator.calculate_image_dimensions(legend_dimensions)
@@ -300,6 +313,7 @@ class Renderer:
                 statuses_present,
                 network_colors,
                 layers,
+                mixed_present,
             )
 
         return img

@@ -5,6 +5,31 @@ from fle.env.entities import Direction, EntityStatus
 from fle.env.tools.admin.render_simple.layers.layer_renderer import LayerRenderer
 
 
+def _lane_kinds(lane) -> int:
+    try:
+        return len(lane) if lane else 0
+    except TypeError:
+        return 0
+
+
+def has_mixed_lane(entity) -> bool:
+    """True when one belt lane under this entity carries more than one item type.
+
+    LOCAL PATCH (2026-10-16, docs/02 §7.83 G).  A belt's two lanes are invisible
+    in the drawn shapes (and a lane carrying two item types looks exactly like a
+    single-item one), so this drives the magenta corner marker -- the only visual
+    hint the schematic can give.  Runs over a BeltGroup's members too.
+    """
+    belts = getattr(entity, "belts", None)
+    if belts:
+        return any(has_mixed_lane(b) for b in belts)
+
+    inventory = getattr(entity, "inventory", None)
+    if not isinstance(inventory, dict):
+        return False
+    return any(_lane_kinds(inventory.get(lane)) > 1 for lane in ("left", "right"))
+
+
 class EntitiesLayerRenderer(LayerRenderer):
     """Renderer for player-built entities"""
 
@@ -72,13 +97,23 @@ class EntitiesLayerRenderer(LayerRenderer):
                 direction=entity.direction if hasattr(entity, "direction") else None,
             )
 
-            # Add status indicator in corner if enabled
+            # Add status indicator in corner if enabled.
+            # The top-left corner is reserved for real entity statuses; the
+            # mixed-belt-lane marker goes to the TOP-RIGHT so it never displaces
+            # them (user, 2026-10-16). Both are explained in the legend.
             if (
                 self.config.style["status_indicator_enabled"]
                 and entity.status != EntityStatus.NORMAL
             ):
                 self.shape_renderer.draw_status_indicator(
                     draw, x1, y1, x2, y2, entity.status
+                )
+
+            if has_mixed_lane(entity):
+                self.shape_renderer.draw_status_indicator(
+                    draw, x1, y1, x2, y2, entity.status,
+                    color=self.config.style.get("mixed_lane_color", (255, 0, 200)),
+                    corner="right",
                 )
 
             # Add direction indicator if enabled

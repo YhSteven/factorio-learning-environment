@@ -292,18 +292,30 @@ class ShapeRenderer:
         x2: float,
         y2: float,
         status: EntityStatus,
+        color: Optional[Tuple[int, int, int]] = None,
+        corner: str = "left",
     ) -> None:
-        """Draw a status indicator in the corner if the entity status is not normal"""
-        if (
+        """Draw a status indicator in the corner if the entity status is not normal
+
+        ``color`` overrides the status colour -- used for the mixed-belt-lane
+        marker, which is not an entity status. ``corner`` puts it in the top-left
+        (default) or the top-right (so a mixed marker and a real status marker can
+        coexist). LOCAL PATCH, 2026-10-16.
+        """
+        if color is None and (
             not self.config.style["status_indicator_enabled"]
             or status == EntityStatus.NORMAL
         ):
             return
 
-        status_color = self.config.get_status_color(status)
+        status_color = color or self.config.get_status_color(status)
 
-        # Draw a small triangle in the top-left corner
-        draw.polygon([(x1, y1), (x1 + 8, y1), (x1, y1 + 8)], fill=status_color)
+        # Draw a small triangle in the requested corner
+        if corner == "right":
+            points = [(x2, y1), (x2 - 8, y1), (x2, y1 + 8)]
+        else:
+            points = [(x1, y1), (x1 + 8, y1), (x1, y1 + 8)]
+        draw.polygon(points, fill=status_color)
 
     def draw_origin_marker(
         self, draw: ImageDraw.ImageDraw, x: float, y: float, font

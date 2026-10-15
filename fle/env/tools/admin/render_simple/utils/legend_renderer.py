@@ -3,7 +3,10 @@ from PIL import ImageDraw, ImageFont, Image
 import math
 
 from fle.env.entities import EntityStatus, Layer
-from fle.env.tools.admin.render_simple.utils.render_config import RenderConfig
+from fle.env.tools.admin.render_simple.utils.render_config import (
+    RenderConfig,
+    MIXED_LANE_KEY,
+)
 from fle.env.tools.admin.render_simple.utils.colour_manager import ColourManager
 from fle.env.tools.admin.render_simple.utils.entity_categoriser import EntityCategoriser
 from fle.env.tools.admin.render_simple.utils.shape_renderer import ShapeRenderer
@@ -69,6 +72,7 @@ class LegendRenderer:
         statuses_present: Optional[Set[EntityStatus]] = None,
         electricity_networks: Optional[Dict[int, tuple]] = None,
         layers: Layer = Layer.ALL,
+        mixed_present: bool = False,
     ) -> Dict[str, Any]:
         """
         Calculate the dimensions of the legend without actually drawing it
@@ -80,6 +84,8 @@ class LegendRenderer:
             natural_elements_present: Set of natural element types present in the map
             statuses_present: Set of entity statuses present in the map
             electricity_networks: Dictionary mapping network IDs to their colors
+            mixed_present: True when some belt lane in view carries 2+ item types
+                (adds the "Mixed lane (top-right)" entry). LOCAL PATCH 2026-10-16.
 
         Returns:
             Dict with width, height, and position of the legend
@@ -180,11 +186,7 @@ class LegendRenderer:
         status_items = []
         # #29: status indicators describe entities -> only meaningful when the
         # ENTITIES layer is actually drawn.
-        if (
-            self.config.style["status_indicator_enabled"]
-            and statuses_present
-            and (Layer.ENTITIES in layers)
-        ):
+        if self.config.style["status_indicator_enabled"] and (Layer.ENTITIES in layers):
             status_map = {
                 EntityStatus.WORKING: "Working",
                 EntityStatus.NO_POWER: "No Power",
@@ -198,9 +200,17 @@ class LegendRenderer:
             }
 
             # Only include statuses that are actually present
-            for status in statuses_present:
+            for status in statuses_present or set():
                 if status in status_map:
                     status_items.append({"name": status_map[status], "status": status})
+
+            # LOCAL PATCH (2026-10-16): the mixed-belt-lane marker is not an
+            # entity status, but it is drawn in a corner of the same tiles, so it
+            # shares the STATUS section (user: "右上角的单独加一个图例").
+            if mixed_present:
+                status_items.append(
+                    {"name": "Mixed lane (top-right)", "status": MIXED_LANE_KEY}
+                )
 
         # Add electricity networks if present
         electricity_items = []
@@ -404,6 +414,7 @@ class LegendRenderer:
         statuses_present: Optional[Set[EntityStatus]] = None,
         electricity_networks: Optional[Dict[int, tuple]] = None,
         layers: Layer = Layer.ALL,
+        mixed_present: bool = False,
     ) -> None:
         """Draw a combined legend showing entity types with their actual shapes and colors"""
         if not self.config.style["legend_enabled"]:
@@ -424,6 +435,7 @@ class LegendRenderer:
             statuses_present,
             electricity_networks,
             layers,
+            mixed_present,
         )
         legend_width = dimensions["width"]
         legend_height = dimensions["height"]
@@ -558,6 +570,9 @@ class LegendRenderer:
                         "name": status_name,
                         "status_color": status_color,
                         "is_status": True,
+                        # LOCAL PATCH (2026-10-16): the mixed-lane marker lives in
+                        # the top-right corner, so its swatch is mirrored to match.
+                        "corner": "right" if status == MIXED_LANE_KEY else "left",
                     }
                 )
 
@@ -759,14 +774,19 @@ class LegendRenderer:
 
                         # Draw status triangle indicator
                         triangle_size = sample_box_size / 2
-                        draw.polygon(
-                            [
+                        if item.get("corner") == "right":
+                            points = [
+                                (box_x + sample_box_size, box_y),
+                                (box_x + sample_box_size - triangle_size, box_y),
+                                (box_x + sample_box_size, box_y + triangle_size),
+                            ]
+                        else:
+                            points = [
                                 (box_x, box_y),
                                 (box_x + triangle_size, box_y),
                                 (box_x, box_y + triangle_size),
-                            ],
-                            fill=status_color,
-                        )
+                            ]
+                        draw.polygon(points, fill=status_color)
                     elif "is_electricity" in item and item["is_electricity"]:
                         # Draw electricity network indicator
                         network_color = item.get("color", (200, 200, 200))

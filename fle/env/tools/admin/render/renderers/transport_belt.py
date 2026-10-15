@@ -113,15 +113,31 @@ def render_inventory(entity: Dict, grid, image_resolver: Callable) -> Optional[I
     ITEM = 16            # item icon size inside the 64x64 sprite
     CENTER = 32
     SPACING = 8
-    LANE = 7             # lane offset from the belt's centre line
+    LANE = 14            # lane offset from the belt's centre line. The game puts
+                         # belt items at +/-0.25 tile, i.e. 16 px in this 64 px
+                         # tile -- upstream used 6, which piled both lanes onto
+                         # the centre line. 14 keeps them inside the tile while
+                         # matching the game's look.
     MAX_PER_LANE = 4
 
     overlay = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
 
+    def lane_point(t, lane_sign):
+        """Point on this lane's path, t pixels along the direction of travel."""
+        if straight:
+            tx, ty = _TRAVEL[direction]
+            lx, ly = ty, -tx                       # left of travel
+            return (CENTER + tx * t + lx * LANE * lane_sign,
+                    CENTER + ty * t + ly * LANE * lane_sign)
+        return _corner_point(direction, in_side, t, LANE * lane_sign)
+
     def pastes(items_dict, lane_sign):
+        # NOTE (user, 2026-10-16): this image is meant to look like the game and
+        # is not fed to the model, so NO mixed-lane annotation here -- every item
+        # type on a lane is drawn plainly, like the game does. The "one lane, two
+        # item types" signal lives in the schematic (view_map) instead.
         if not items_dict:
             return
-        total = sum(items_dict.values())
         for item_name, count in items_dict.items():
             shown = max(1, min(count, MAX_PER_LANE))
             icon = image_resolver(f"icon_{item_name}", False)
@@ -129,14 +145,7 @@ def render_inventory(entity: Dict, grid, image_resolver: Callable) -> Optional[I
                 continue
             icon = icon.resize((ITEM, ITEM), Image.Resampling.LANCZOS)
             for i in range(shown):
-                t = -12 + i * SPACING
-                if straight:
-                    tx, ty = _TRAVEL[direction]
-                    lx, ly = ty, -tx                       # left of travel
-                    x = CENTER + tx * t + lx * LANE * lane_sign
-                    y = CENTER + ty * t + ly * LANE * lane_sign
-                else:
-                    x, y = _corner_point(direction, in_side, t, LANE * lane_sign)
+                x, y = lane_point(-12 + i * SPACING, lane_sign)
                 overlay.paste(icon, (int(x - ITEM / 2), int(y - ITEM / 2)),
                               icon if icon.mode == "RGBA" else None)
 

@@ -2,6 +2,13 @@ from typing import Dict, Optional, Tuple, Any
 from fle.env.entities import EntityStatus
 
 
+# LOCAL PATCH (2026-10-16): pseudo-status key for the mixed-belt-lane marker.
+# It is NOT an entity status -- it lives in the STATUS legend section purely so
+# the schematic can explain the top-right corner marker. The top-left corner
+# stays reserved for real entity statuses (user, 2026-10-16). See docs/02 §7.83 G.
+MIXED_LANE_KEY = "__mixed_lane__"
+
+
 class RenderConfig:
     """Manages configuration settings for Factorio entity rendering"""
 
@@ -28,6 +35,11 @@ class RenderConfig:
         "backing_rectangle_opacity": 120,  # NEW: Opacity of backing rectangles (0-255)
         "backing_rectangle_lightness": 0.6,  # NEW: How much to lighten the backing rectangle color (0-1)
         "player_indicator_color": (255, 255, 0),
+        # LOCAL PATCH (2026-10-16): a belt lane carrying more than one item type
+        # gets this colour for its top-left corner marker. The drawn shapes cannot
+        # show lane contents, so this is the only visual hint that a mixed lane is
+        # there. See docs/02 §7.83 G.
+        "mixed_lane_color": (255, 0, 200),
         "origin_marker_enabled": True,  # Show origin (0,0) marker
         "origin_marker_color": (255, 100, 100),  # Color for origin marker
         "origin_marker_size": 10,  # Size of origin marker
@@ -143,7 +155,13 @@ class RenderConfig:
         return self.CATEGORY_SHAPES.get(category, "square")
 
     def get_status_color(self, status: EntityStatus) -> Tuple[int, int, int]:
-        """Get the color for an entity status"""
+        """Colour for a status indicator triangle.
+
+        Also resolves `MIXED_LANE_KEY`, which is not an entity status but shares
+        the STATUS legend section (see the constant's comment).
+        """
+        if status == MIXED_LANE_KEY:
+            return self.style["mixed_lane_color"]
         return self.style["status_colors"].get(
             status, (255, 0, 255)
         )  # Magenta for unknown status
