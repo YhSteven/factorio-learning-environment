@@ -8,12 +8,186 @@ from typing import Dict, Tuple, Optional, Callable
 
 from PIL import Image
 
-from ..constants import NORTH, SOUTH, EAST, WEST, VERTICAL, HORIZONTAL
+from ..constants import (
+    NORTH,
+    SOUTH,
+    EAST,
+    WEST,
+    VERTICAL,
+    HORIZONTAL,
+    DIRECTIONS,
+)
 from ..profiler import profile_function
+
+
+# ============================================================================
+# LOCAL PATCH (2026-10-15) -- belt sprites are now picked, not rotated.
+# See docs/02 §7.83.
+#
+# Upstream chose one of four sprites (`_horizontal`, `_vertical`,
+# `_bend_left`, `_bend_right`) and then rotated it by
+#     rotation = direction * 45 - degree_offset
+# Both halves were wrong:
+#   * those four files came from sheet rows 0/1/8/9, which the vanilla data
+#     (base/prototypes/entity/transport-belts.lua) documents as
+#     east / west / south_to_east / east_to_south -- so `_vertical` was really
+#     the WEST straight belt and north/south straights had no sprite at all;
+#   * `direction * 45` assumes the pre-2.0 8-direction encoding, while FLE
+#     passes Factorio's 16-direction values (EAST=4, SOUTH=8, WEST=12), so the
+#     angle is doubled and every cardinal lands on 90 degrees -- N == S and
+#     E == W, pixel for pixel.
+#
+# The extractor now writes one sprite per direction (`_east`, `_north`,
+# `_south_to_west`, ...), so we just pick the file. No rotation anywhere.
+# When those sprites are missing (an older sprite bundle) we fall back to the
+# original rotation path unchanged, so mixed-version setups keep working.
+# ============================================================================
+
+_OPPOSITE_DIR = {NORTH: SOUTH, SOUTH: NORTH, EAST: WEST, WEST: EAST}
+# get_around() index -> the side of *this* belt that neighbour sits on
+_AROUND_SIDE = {0: NORTH, 1: EAST, 2: SOUTH, 3: WEST}
+# travel unit vector per direction (screen coords: +x right, +y down)
+_TRAVEL = {EAST: (1, 0), NORTH: (0, -1), WEST: (-1, 0), SOUTH: (0, 1)}
+
+
+def _dir_value(entity: Dict) -> int:
+    d = entity.get("direction", 0)
+    return d.value if not isinstance(d, int) else d
+
+
+def _belt_sprite_name(entity: Dict, grid) -> Optional[str]:
+    """Pick the sprite file for this belt, or None if the layout is exotic."""
+    name = entity["name"]
+    direction = _dir_value(entity)
+    if direction not in _OPPOSITE_DIR:
+        return None
+
+    around = get_around(entity, grid)
+    inputs = [_AROUND_SIDE[i] for i, flag in enumerate(around) if flag]
+
+    if not inputs or _OPPOSITE_DIR[direction] in inputs:
+        return f"{name}_{DIRECTIONS[direction]}"
+
+    side = next((s for s in inputs if s != _OPPOSITE_DIR[direction]), None)
+    if side is None:
+        return None
+    return f"{name}_{DIRECTIONS[side]}_to_{DIRECTIONS[direction]}"
 
 
 @profile_function("transport_belt.render", include_args=True)
 def render(entity: Dict, grid, image_resolver: Callable) -> Optional[Image.Image]:
+    """Render transport belt by picking the direction's own sprite."""
+    sprite = _belt_sprite_name(entity, grid)
+    if sprite:
+        image = image_resolver(sprite)
+        if image is not None:
+            return image
+    return _legacy_render(entity, grid, image_resolver)
+
+
+@profile_function("transport_belt.render_inventory", include_args=True)
+def render_inventory(entity: Dict, grid, image_resolver: Callable) -> Optional[Image.Image]:
+    """Draw the belt's contents, one item per lane position, in the belt's own frame.
+
+    Unlike upstream this places items directly (no rotation), so it stays
+    correct for every direction -- and it draws *every* item type on a lane
+    instead of silently keeping only the first one (see docs/02 §7.83 D2).
+    """
+    inventory = entity.get("inventory", {}) or {}
+    left_items = inventory.get("left") or {}
+    right_items = inventory.get("right") or {}
+    if not left_items and not right_items:
+        return None
+
+    direction = _dir_value(entity)
+    if direction not in _OPPOSITE_DIR:
+        return _legacy_render_inventory(entity, grid, image_resolver)
+
+    around = get_around(entity, grid)
+    inputs = [_AROUND_SIDE[i] for i, flag in enumerate(around) if flag]
+    straight = (not inputs) or (_OPPOSITE_DIR[direction] in inputs)
+    in_side = None
+    if not straight:
+        in_side = next((s for s in inputs if s != _OPPOSITE_DIR[direction]), None)
+
+    ITEM = 16            # item icon size inside the 64x64 sprite
+    CENTER = 32
+    SPACING = 8
+    LANE = 7             # lane offset from the belt's centre line
+    MAX_PER_LANE = 4
+
+    overlay = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+
+    def pastes(items_dict, lane_sign):
+        if not items_dict:
+            return
+        total = sum(items_dict.values())
+        for item_name, count in items_dict.items():
+            shown = max(1, min(count, MAX_PER_LANE))
+            icon = image_resolver(f"icon_{item_name}", False)
+            if not icon:
+                continue
+            icon = icon.resize((ITEM, ITEM), Image.Resampling.LANCZOS)
+            for i in range(shown):
+                t = -12 + i * SPACING
+                if straight:
+                    tx, ty = _TRAVEL[direction]
+                    lx, ly = ty, -tx                       # left of travel
+                    x = CENTER + tx * t + lx * LANE * lane_sign
+                    y = CENTER + ty * t + ly * LANE * lane_sign
+                else:
+                    x, y = _corner_point(direction, in_side, t, LANE * lane_sign)
+                overlay.paste(icon, (int(x - ITEM / 2), int(y - ITEM / 2)),
+                              icon if icon.mode == "RGBA" else None)
+
+    def _corner_point(out_dir, in_dir, t, lane_off):
+        """Point on the quarter-turn arc; t is the along-path pixel offset."""
+        import math as _m
+
+        def edge_mid(d):
+            return {NORTH: (32.0, 0.0), SOUTH: (32.0, 64.0),
+                    WEST: (0.0, 32.0), EAST: (64.0, 32.0)}[d]
+
+        # The turn is about the tile corner shared by the entry and exit edges.
+        if in_dir in (EAST, WEST):
+            cx = 0.0 if in_dir == WEST else 64.0
+            cy = 0.0 if out_dir == NORTH else 64.0
+        else:
+            cx = 0.0 if out_dir == WEST else 64.0
+            cy = 0.0 if in_dir == NORTH else 64.0
+
+        mx, my = edge_mid(in_dir)
+        nx, ny = edge_mid(out_dir)
+        a_in = _m.atan2(my - cy, mx - cx)
+        a_out = _m.atan2(ny - cy, nx - cx)
+        da = a_out - a_in
+        while da > _m.pi:
+            da -= 2 * _m.pi
+        while da < -_m.pi:
+            da += 2 * _m.pi
+
+        frac = max(0.0, min(1.0, (t + 12) / 24.0))
+        ang = a_in + da * frac
+
+        # Travel direction on entry is the opposite of the entry side; if the
+        # turn centre lies to the traveller's left it is a left turn and the
+        # left lane is the inner one.
+        ux, uy = _TRAVEL[_OPPOSITE_DIR[in_dir]]
+        left_x, left_y = uy, -ux
+        to_centre = (cx - mx, cy - my)
+        left_turn = (to_centre[0] * left_x + to_centre[1] * left_y) > 0
+        sign = -1 if left_turn else 1
+        radius = 32.0 + lane_off * sign
+        return (cx + radius * _m.cos(ang), cy + radius * _m.sin(ang))
+
+    # line 1 is the belt's own left lane, line 2 the right one (same convention
+    # the previous implementation used).
+    pastes(left_items, +1)
+    pastes(right_items, -1)
+    return overlay
+
+
+def _legacy_render(entity: Dict, grid, image_resolver: Callable) -> Optional[Image.Image]:
     """Render transport belt"""
 
     around = get_around(entity, grid)
@@ -92,11 +266,11 @@ def render_shadow(
     return None
 
 
-@profile_function("transport_belt.render_inventory", include_args=True)
-def render_inventory(
+@profile_function("transport_belt.render_inventory_legacy", include_args=True)
+def _legacy_render_inventory(
     entity: Dict, grid, image_resolver: Callable
 ) -> Optional[Image.Image]:
-    """Transport belts display their contents on them"""
+    """Transport belts display their contents on them (pre-2026-10-15 path)"""
     inventory = entity.get("inventory", {})
     if not inventory or (not inventory.get("left") and not inventory.get("right")):
         return None

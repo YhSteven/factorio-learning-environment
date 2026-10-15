@@ -361,31 +361,48 @@ class EntitySpritesheetExtractor:
                         self.extract_from_picture(name, value, suffix + f"_{key}")
 
     # Entity-specific extraction methods
+    # LOCAL PATCH (transport belt sprite rows, 2026-10-15) -- see docs/02 §7.83.
+    #
+    # The belt sheet is 16 frames (x) by 20 directions (y); the row order is
+    # documented in the vanilla data
+    # (base/prototypes/entity/transport-belts.lua:13-32):
+    #     row 0..3   = east / west / north / south   (straight)
+    #     row 4..11  = the eight corner pieces, named "<input>_to_<output>"
+    #     row 12..19 = the underground-belt in/out segments
+    #
+    # Upstream cropped rows 0/1/8/9 and named them
+    # horizontal / vertical / bend_right / bend_left.  Row 1 is the WEST
+    # straight belt (not a vertical one) and rows 8/9 are just two of the eight
+    # corners, so north/south straights had no sprite at all and the renderer
+    # had to rotate the wrong art.  We now emit one file per direction.
+    BELT_DIRECTION_ROWS = (
+        "east", "west", "north", "south",
+        "east_to_north", "north_to_east",
+        "west_to_north", "north_to_west",
+        "south_to_east", "east_to_south",
+        "south_to_west", "west_to_south",
+    )
+
     def transport_belt(self, entity: str, data: Dict):
-        """Extract transport belt sprites"""
+        """Extract transport belt sprites -- one file per direction."""
         animations = data.get("animations")
         if not animations:
             animations = data.get("belt_animation_set", {}).get("animation_set", [])
 
-        # Horizontal
-        img = self.process_picture(animations)
-        if img:
-            self.save_canvas(f"{entity}_horizontal.png", img)
+        if not isinstance(animations, dict) or "filename" not in animations:
+            # Not a flat sheet (e.g. an AnimationVariations array) -- nothing we
+            # can crop by row offset; leave it to the generic path.
+            return
 
-        # Vertical
-        img = self.process_picture(animations, 0, animations.get("height", 0))
-        if img:
-            self.save_canvas(f"{entity}_vertical.png", img)
+        row_height = animations.get("height", 0)
+        if not row_height:
+            print(f"Warning: no row height for {entity}; cannot split belt sheet")
+            return
 
-        # Bend right
-        img = self.process_picture(animations, 0, 8 * animations.get("height", 0))
-        if img:
-            self.save_canvas(f"{entity}_bend_right.png", img)
-
-        # Bend left
-        img = self.process_picture(animations, 0, 9 * animations.get("height", 0))
-        if img:
-            self.save_canvas(f"{entity}_bend_left.png", img)
+        for index, direction in enumerate(self.BELT_DIRECTION_ROWS):
+            img = self.process_picture(animations, 0, index * row_height)
+            if img:
+                self.save_canvas(f"{entity}_{direction}.png", img)
 
     def underground_belt(self, entity: str, data: Dict):
         """Extract underground belt sprites"""
